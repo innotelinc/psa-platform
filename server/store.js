@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, 'data');
 const DB_FILE = join(DATA_DIR, 'db.json');
+const IN_MEMORY = process.env.DB_IN_MEMORY === '1';
 
 export const PLATFORMS = [
   { id: 'instagram', name: 'Instagram', category: 'social', color: '#E1306C', glow: '#ff2d78', handleType: '@handle', charLimit: 2200, emoji: '📸' },
@@ -87,6 +88,10 @@ let db = null;
 
 function load() {
   if (db) return db;
+  if (IN_MEMORY) {
+    db = { users: {} };
+    return db;
+  }
   if (existsSync(DB_FILE)) {
     try { db = JSON.parse(readFileSync(DB_FILE, 'utf8')); } catch { db = { users: {} }; }
   } else {
@@ -96,6 +101,7 @@ function load() {
 }
 
 export function save() {
+  if (IN_MEMORY) return;
   mkdirSync(DATA_DIR, { recursive: true });
   writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 }

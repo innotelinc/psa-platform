@@ -563,13 +563,18 @@ if (existsSync(join(STATIC_DIR, 'index.html'))) {
 }
 
 // ------------------------------------------------------------------ boot
-app.listen(PORT, HOST, () => {
-  const addr = HOST === '0.0.0.0' ? `0.0.0.0:${PORT} (all interfaces)` : `${HOST}:${PORT}`;
-  console.log(`🎉 FameForge API → http://${addr}`);
-  if (HOST === '0.0.0.0') {
-    console.log(`   Local:   http://localhost:${PORT}`);
-    console.log(`   Public:  ${PUBLIC_URL}`);
-  }
-});
-setInterval(tick, SCHEDULE_MS);
-tick();
+export { app };
+
+const isMain = process.argv[1] === fileURLToPath(import.meta.url);
+if (isMain) {
+  app.listen(PORT, HOST, () => {
+    const addr = HOST === '0.0.0.0' ? `0.0.0.0:${PORT} (all interfaces)` : `${HOST}:${PORT}`;
+    console.log(`🎉 FameForge API → http://${addr}`);
+    if (HOST === '0.0.0.0') {
+      console.log(`   Local:   http://localhost:${PORT}`);
+      console.log(`   Public:  ${PUBLIC_URL}`);
+    }
+  });
+  setInterval(tick, SCHEDULE_MS);
+  tick();
+}
