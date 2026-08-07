@@ -118,12 +118,71 @@ Open **http://localhost:5173** and register an account.
 
 ### Docker (Production)
 
+The app runs in a single container — Node.js serves both the API and the built React frontend.
+
+#### Option 1: Docker Compose (recommended)
+
+Uses a named volume for data persistence so your posts, campaigns, and credentials survive container restarts.
+
 ```bash
-docker build -t psa-platform .
-docker run -d -p 3001:3001 psa-platform
+# Build and start (detached, restarts automatically)
+docker compose up -d --build
+
+# View logs
+docker compose logs -f
+
+# Stop the app
+docker compose down
 ```
 
-Open **http://localhost:3001** — everything runs in a single container.
+Open **http://localhost:3001**.
+
+#### Option 2: Standalone Docker
+
+```bash
+# Build the image
+docker build -t psa-platform .
+
+# Run with a named volume for persistent data
+docker run -d \
+  -p 3001:3001 \
+  -v psa-data:/app/server/data \
+  --name psa-platform \
+  --restart unless-stopped \
+  psa-platform
+
+# View logs
+docker logs -f psa-platform
+
+# Stop & remove
+docker stop psa-platform && docker rm psa-platform
+```
+
+Open **http://localhost:3001**.
+
+#### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `3001` | Server port |
+| `HOST` | `0.0.0.0` | Bind address |
+| `NODE_ENV` | `production` | Environment mode |
+
+Override in `docker-compose.yml` or pass `-e` flags to `docker run`.
+
+#### Custom Port
+
+To run on a different port (e.g., 8080):
+
+```bash
+# Docker Compose
+PORT=8080 docker compose up -d
+
+# Standalone
+docker run -d -p 8080:3001 -e PORT=3001 -v psa-data:/app/server/data --name psa-platform psa-platform
+```
+
+> **Note:** The internal container port stays `3001`. Only change the host port mapping (`-p HOST:CONTAINER`).
 
 ---
 
