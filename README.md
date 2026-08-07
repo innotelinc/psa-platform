@@ -110,7 +110,7 @@ cd psa-platform
 # Install all dependencies
 npm run install:all
 
-# Start dev mode (server :3001 + client :5173)
+# Start dev mode (server :3000 + client :5173)
 npm run dev
 ```
 
@@ -135,7 +135,7 @@ docker compose logs -f
 docker compose down
 ```
 
-Open **http://localhost:3001**.
+Open **http://localhost:3000**.
 
 #### Option 2: Standalone Docker
 
@@ -145,7 +145,7 @@ docker build -t psa-platform .
 
 # Run with a named volume for persistent data
 docker run -d \
-  -p 3001:3001 \
+  -p 3000:3000 \
   -v psa-data:/app/server/data \
   --name psa-platform \
   --restart unless-stopped \
@@ -158,13 +158,13 @@ docker logs -f psa-platform
 docker stop psa-platform && docker rm psa-platform
 ```
 
-Open **http://localhost:3001**.
+Open **http://localhost:3000**.
 
 #### Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | `3001` | Server port |
+| `PORT` | `3000` | Server port |
 | `HOST` | `0.0.0.0` | Bind address |
 | `NODE_ENV` | `production` | Environment mode |
 
@@ -179,10 +179,10 @@ To run on a different port (e.g., 8080):
 PORT=8080 docker compose up -d
 
 # Standalone
-docker run -d -p 8080:3001 -e PORT=3001 -v psa-data:/app/server/data --name psa-platform psa-platform
+docker run -d -p 8080:3000 -e PORT=3000 -v psa-data:/app/server/data --name psa-platform psa-platform
 ```
 
-> **Note:** The internal container port stays `3001`. Only change the host port mapping (`-p HOST:CONTAINER`).
+> **Note:** The internal container port stays `3000`. Only change the host port mapping (`-p HOST:CONTAINER`).
 
 ---
 

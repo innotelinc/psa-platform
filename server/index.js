@@ -11,7 +11,7 @@ import { buildAuthorizeUrl, handleCallback, getConnectionStatus, disconnectPlatf
 import { postToPlatform } from './postEngine.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
 const STATIC_DIR = process.env.STATIC_DIR || join(__dirname, 'public');

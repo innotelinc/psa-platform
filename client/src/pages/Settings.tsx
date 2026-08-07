@@ -174,7 +174,7 @@ export default function Settings() {
                 </span>
               </div>
               <div className="faint small mt-3">
-                🔒 Credentials are stored encrypted in your local server data. The OAuth redirect URI is <code style={{ background: 'rgba(255,255,255,0.07)', padding: '2px 6px', borderRadius: 5 }}>http://localhost:3001/api/oauth/&#123;platform&#125;/callback</code> — add this to each platform's allowed redirect URIs.
+                🔒 Credentials are stored encrypted in your local server data. The OAuth redirect URI is <code style={{ background: 'rgba(255,255,255,0.07)', padding: '2px 6px', borderRadius: 5 }}>http://localhost:3000/api/oauth/&#123;platform&#125;/callback</code> — add this to each platform's allowed redirect URIs.
               </div>
             </div>
           </div>

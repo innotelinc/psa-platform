@@ -64,7 +64,7 @@ export async function handleCallback(platformId, code, state, redirectBase) {
   if (!platform) throw new Error(`Unknown platform: ${platformId}`);
 
   const creds = getCreds(pending.userId, platformId);
-  const base = redirectBase || process.env.OAUTH_REDIRECT_BASE || process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 3001}`;
+  const base = redirectBase || process.env.OAUTH_REDIRECT_BASE || process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`;
   const redirectUri = `${base}/api/oauth/${platformId}/callback`;
 
   const body = new URLSearchParams({

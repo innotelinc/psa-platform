@@ -29,12 +29,12 @@ RUN mkdir -p /app/server/data && chown -R node:node /app/server/data
 USER node
 
 ENV NODE_ENV=production
-ENV PORT=3001
+ENV PORT=3000
 ENV HOST=0.0.0.0
 
-EXPOSE 3001
+EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3001/api/oauth/status',r=>{process.exit(r.statusCode===200?0:1)})"
+    CMD node -e "require('http').get('http://localhost:3000/api/oauth/status',r=>{process.exit(r.statusCode===200?0:1)})"
 
 CMD ["node", "server/index.js"]
