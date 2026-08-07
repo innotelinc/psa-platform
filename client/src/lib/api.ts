@@ -32,6 +32,8 @@ export const api = {
     request<{ token: string }>('/auth/login', 'POST', { email, password }),
   forgotPassword: (email: string) =>
     request<{ message: string; newPassword: string }>('/auth/forgot-password', 'POST', { email }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ message: string }>('/auth/change-password', 'POST', { currentPassword, newPassword }),
   state: () => request<State>('/state'),
   updateState: (patch: any) => request<State>('/state', 'PUT', patch),
   updateChannel: (id: string, patch: any) => request<any>(`/channels/${id}`, 'PUT', patch),

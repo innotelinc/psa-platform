@@ -75,6 +75,17 @@ app.post('/api/auth/forgot-password', (req, res) => {
   res.json({ message: 'Password has been reset', newPassword });
 });
 
+app.post('/api/auth/change-password', authed, (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Current password and new password are required' });
+  if (newPassword.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
+  if (req.user.hash !== hash(currentPassword, req.user.salt)) return res.status(401).json({ error: 'Current password is incorrect' });
+  req.user.salt = uid();
+  req.user.hash = hash(newPassword, req.user.salt);
+  save();
+  res.json({ message: 'Password changed successfully' });
+});
+
 app.get('/api/auth/me', authed, (req, res) => res.json({ user: publicUser(req.user) }));
 
 const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email });

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { KeyRound, Sparkles, Trash2, Save, Bot, Check, Link2, Shield, ExternalLink } from 'lucide-react';
+import { KeyRound, Sparkles, Trash2, Save, Bot, Check, Link2, Shield, ExternalLink, Lock, Loader2 } from 'lucide-react';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
 import { Btn, Field, Chip, PlatGlyph } from '../components/ui';
@@ -12,6 +12,10 @@ export default function Settings() {
   const [draftPlatforms, setDraftPlatforms] = useState<Record<string, any>>({});
   const [saving, setSaving] = useState(false);
   const [savingPlatform, setSavingPlatform] = useState<string | null>(null);
+  const [changingPw, setChangingPw] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [showPwForm, setShowPwForm] = useState(false);
 
   if (!user) return null;
   const ai = draftAi || user.settings.ai;
@@ -214,6 +218,69 @@ export default function Settings() {
               <Chip tone="violet">{user.campaigns.filter((c) => c.active).length} active campaigns</Chip>
               <Chip tone="blue">{user.posts.filter((p) => p.status === 'published').length} posts published</Chip>
             </div>
+          </div>
+
+          <div className="card">
+            <div className="card-title"><Lock size={16} style={{ color: 'var(--cyan)' }} /> Change password</div>
+            <div className="card-sub">Set a new password for your account.</div>
+            {!showPwForm ? (
+              <Btn variant="ghost" className="mt-3" onClick={() => setShowPwForm(true)}>
+                <Lock size={14} /> Change your password
+              </Btn>
+            ) : (
+              <form
+                className="col mt-3"
+                style={{ gap: 12 }}
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (newPassword.length < 6) { toast('Password must be at least 6 characters', 'bad'); return; }
+                  setChangingPw(true);
+                  try {
+                    await api.changePassword(currentPassword, newPassword);
+                    toast('Password changed! 🔐');
+                    setCurrentPassword('');
+                    setNewPassword('');
+                    setShowPwForm(false);
+                  } catch (err: any) {
+                    toast(err.message || 'Something went wrong', 'bad');
+                  } finally {
+                    setChangingPw(false);
+                  }
+                }}
+              >
+                <Field label="Current password">
+                  <input
+                    className="input"
+                    type="password"
+                    placeholder="Enter current password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    required
+                    autoFocus
+                  />
+                </Field>
+                <Field label="New password">
+                  <input
+                    className="input"
+                    type="password"
+                    placeholder="At least 6 characters"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    required
+                    minLength={6}
+                  />
+                </Field>
+                <div className="row" style={{ gap: 8 }}>
+                  <Btn type="submit" variant="primary" disabled={changingPw}>
+                    {changingPw ? <Loader2 className="spin" size={14} /> : <Save size={14} />}
+                    {changingPw ? 'Changing…' : 'Update password'}
+                  </Btn>
+                  <Btn type="button" variant="ghost" onClick={() => { setShowPwForm(false); setCurrentPassword(''); setNewPassword(''); }}>
+                    Cancel
+                  </Btn>
+                </div>
+              </form>
+            )}
           </div>
 
           <div className="card" style={{ borderColor: 'rgba(239,68,68,0.3)' }}>
