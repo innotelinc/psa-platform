@@ -61,6 +61,20 @@ app.post('/api/auth/login', (req, res) => {
   res.json({ token: user.token, user: publicUser(user) });
 });
 
+app.post('/api/auth/forgot-password', (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: 'Email is required' });
+  const user = Object.values(getUsers()).find((u) => u.email === (email || '').toLowerCase());
+  if (!user) return res.status(404).json({ error: 'No account found with that email' });
+  // For self-hosted: generate a new random password and return it
+  const newPassword = uid().slice(0, 12);
+  user.salt = uid();
+  user.hash = hash(newPassword, user.salt);
+  user.token = uid();
+  save();
+  res.json({ message: 'Password has been reset', newPassword });
+});
+
 app.get('/api/auth/me', authed, (req, res) => res.json({ user: publicUser(req.user) }));
 
 const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email });

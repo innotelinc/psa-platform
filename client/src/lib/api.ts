@@ -30,6 +30,8 @@ export const api = {
     request<{ token: string }>('/auth/register', 'POST', { name, email, password }),
   login: (email: string, password: string) =>
     request<{ token: string }>('/auth/login', 'POST', { email, password }),
+  forgotPassword: (email: string) =>
+    request<{ message: string; newPassword: string }>('/auth/forgot-password', 'POST', { email }),
   state: () => request<State>('/state'),
   updateState: (patch: any) => request<State>('/state', 'PUT', patch),
   updateChannel: (id: string, patch: any) => request<any>(`/channels/${id}`, 'PUT', patch),

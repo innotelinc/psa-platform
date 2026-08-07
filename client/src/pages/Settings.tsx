@@ -214,10 +214,6 @@ export default function Settings() {
               <Chip tone="violet">{user.campaigns.filter((c) => c.active).length} active campaigns</Chip>
               <Chip tone="blue">{user.posts.filter((p) => p.status === 'published').length} posts published</Chip>
             </div>
-            <div className="divider" />
-            <div className="faint small" style={{ lineHeight: 1.7 }}>
-              <b className="muted">Demo mode:</b> all platform connections and analytics are simulated locally. Real posting requires official API access from each platform (Meta, X, LinkedIn…). The integration points are built in — connect real keys to go live.
-            </div>
           </div>
 
           <div className="card" style={{ borderColor: 'rgba(239,68,68,0.3)' }}>
