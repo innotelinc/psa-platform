@@ -1,0 +1,42 @@
+{
+  "name": "psa-platform",
+  "version": "1.0.0",
+  "description": "PSA Platform — Personal Social Assistant. AI-powered brand growth engine that posts to all your socials on autopilot, keeps professional profiles fresh, auto-builds your resume and personal website.",
+  "private": true,
+  "type": "module",
+  "homepage": "https://github.com/innotelinc/psa-platform#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/innotelinc/psa-platform.git"
+  },
+  "bugs": {
+    "url": "https://github.com/innotelinc/psa-platform/issues"
+  },
+  "keywords": [
+    "social-media",
+    "automation",
+    "personal-brand",
+    "ai-content",
+    "campaign-scheduler",
+    "resume-builder",
+    "personal-website",
+    "oauth",
+    "react",
+    "express",
+    "vite"
+  ],
+  "author": "Darnel Hunter <darnelhunter@gmail.com>",
+  "license": "MIT",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:client": "npm --prefix client run dev",
+    "dev:server": "npm --prefix server run dev",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix server run start",
+    "install:all": "npm install && npm --prefix client install && npm --prefix server install",
+    "typecheck": "npm --prefix client run typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
