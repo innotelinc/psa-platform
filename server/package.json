@@ -1,6 +1,6 @@
 {
   "name": "fameforge-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "FameForge API server — auth, campaigns, scheduling, AI content, posting engine.",
   "private": true,
   "type": "module",

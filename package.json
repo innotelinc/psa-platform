@@ -1,6 +1,6 @@
 {
   "name": "psa-platform",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "PSA Platform — Personal Social Assistant. AI-powered brand growth engine that posts to all your socials on autopilot, keeps professional profiles fresh, auto-builds your resume and personal website.",
   "private": true,
   "type": "module",
