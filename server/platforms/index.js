@@ -442,6 +442,24 @@ export async function autoConfigurePlatform(userId, platformId) {
     } catch { /* channel fetch may fail */ }
   }
 
+  // TikTok: fetch creator info → update channel handle & followers
+  if (platformId === 'tiktok') {
+    try {
+      const r = await fetch('https://open.tiktokapis.com/v2/user/info/', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (r.ok) {
+        const { data } = await r.json();
+        const info = data?.user;
+        const ch = user.channels?.find((c) => c.id === 'tiktok');
+        if (ch && info) {
+          if (info.display_name) ch.handle = '@' + info.display_name.replace(/\s+/g, '');
+          if (info.follower_count != null) ch.followers = info.follower_count;
+        }
+      }
+    } catch { /* user info fetch may fail */ }
+  }
+
   // Threads: fetch user ID from /me
   if (platformId === 'threads') {
     try {
