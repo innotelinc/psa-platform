@@ -51,7 +51,7 @@ export const api = {
   oauthAuthorize: (platform: string) => request<{ url: string }>(`/oauth/${platform}/authorize`, 'POST'),
   oauthStatus: () => request<Record<string, any>>('/oauth/status'),
   oauthDisconnect: (platform: string) => request<{ ok: boolean }>(`/oauth/${platform}/disconnect`, 'POST'),
-  savePlatformCredentials: (platform: string, creds: { clientId: string; clientSecret: string; extra?: any }) =>
+  savePlatformCredentials: (platform: string, creds: { clientId?: string; clientSecret?: string; extra?: any; replaceExtra?: boolean }) =>
     request<{ ok: boolean }>(`/oauth/${platform}/credentials`, 'PUT', creds),
   setPlatformExtra: (platform: string, extra: any) =>
     request<{ ok: boolean }>(`/oauth/${platform}/extra`, 'POST', { extra }),

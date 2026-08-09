@@ -185,8 +185,9 @@ export default function Settings() {
                       <div className="row" style={{ gap: 6 }}>
                         {configured && (
                           <button className="btn ghost sm" style={{ fontSize: 11 }} onClick={async () => {
-                            // X: clear OAuth 1.0a extra fields only; other platforms: clear clientId/clientSecret
-                            await api.savePlatformCredentials(pid, { clientId: '', clientSecret: '', extra: isX ? {} : storedExtra });
+                            // X: clear OAuth 1.0a extra fields; other platforms: clear clientId/clientSecret.
+                            // replaceExtra:true makes the server replace (not merge) the extra object.
+                            await api.savePlatformCredentials(pid, { clientId: '', clientSecret: '', extra: isX ? {} : storedExtra, replaceExtra: true });
                             setDraftPlatforms((p) => { const n = { ...p }; delete n[pid]; return n; });
                             await refresh();
                             toast(`Cleared ${platName(pid)} credentials`);
@@ -196,7 +197,13 @@ export default function Settings() {
                           setSavingPlatform(pid);
                           try {
                             const mergedExtra = { ...storedExtra, ...(draft.extra || {}) };
-                            await api.savePlatformCredentials(pid, { clientId: draft.clientId || '', clientSecret: draft.clientSecret || '', extra: mergedExtra });
+                            // Only send clientId/clientSecret when the user actually typed them —
+                            // the server preserves stored values for omitted fields, so saving
+                            // a page ID / board selection can't wipe the API credentials.
+                            const payload: any = { extra: mergedExtra };
+                            if (draft.clientId) payload.clientId = draft.clientId;
+                            if (draft.clientSecret) payload.clientSecret = draft.clientSecret;
+                            await api.savePlatformCredentials(pid, payload);
                             await refresh();
                             toast(`${platName(pid)} API credentials saved 🔑`);
                             setDraftPlatforms((p) => { const n = { ...p }; delete n[pid]; return n; });

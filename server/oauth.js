@@ -267,12 +267,21 @@ export function getConnectionStatus(userId, platformId) {
   };
 }
 
-export function saveCredentials(userId, platformId, clientId, clientSecret, extra = {}) {
+// Save platform developer credentials. Fields left undefined keep their stored
+// value (PUT patch semantics), and `extra` is merged — so saving just a page ID or
+// board selection never wipes the Client ID/Secret. Pass `replaceExtra: true` to
+// replace the whole extra object instead (used when clearing credentials).
+export function saveCredentials(userId, platformId, clientId, clientSecret, extra = {}, replaceExtra = false) {
   const users = getUsers();
   const user = users[userId];
   if (!user) return;
   if (!user.platformCredentials) user.platformCredentials = {};
-  user.platformCredentials[platformId] = { clientId, clientSecret, extra };
+  const existing = user.platformCredentials[platformId] || {};
+  user.platformCredentials[platformId] = {
+    clientId: clientId !== undefined ? clientId : existing.clientId,
+    clientSecret: clientSecret !== undefined ? clientSecret : existing.clientSecret,
+    extra: replaceExtra ? (extra || {}) : { ...(existing.extra || {}), ...(extra || {}) },
+  };
   save();
 }
 

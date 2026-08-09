@@ -83,6 +83,11 @@ const authed = (req, res, next) => {
 
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 
+// Escape untrusted strings before embedding them in OAuth callback HTML.
+// The error page renders provider-supplied query params (error_description),
+// which arrive attacker-controlled and must never be injected raw.
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
 // ------------------------------------------------------------------ auth
 app.post('/api/auth/register', (req, res) => {
   const { name, email, password } = req.body || {};
@@ -250,7 +255,7 @@ app.get('/api/oauth/:platform/callback', async (req, res) => {
       <style>body{font-family:system-ui;background:#0b0b18;color:#f5f5fb;display:grid;place-items:center;min-height:100vh;text-align:center}
       h1{color:#f87171}.btn{display:inline-block;margin-top:20px;padding:12px 24px;background:#ff2d78;color:#fff;border-radius:12px;text-decoration:none}
       </style></head><body><div><h1>❌ Connection Failed</h1>
-      <p>${error_description || error}</p>
+      <p>${esc(error_description || error)}</p>
       <a class="btn" href="/">Back to FameForge</a>
       <script>setTimeout(()=>{window.close()},4000)</script></div></body></html>`);
   }
@@ -268,6 +273,8 @@ app.get('/api/oauth/:platform/callback', async (req, res) => {
     // Auto-fetch platform-specific config (pages, boards, accounts)
     // Await so extra fields are populated before the Dashboard refreshes
     await autoConfigurePlatform(userId, platform).catch(() => {});
+    // The success page is served on the app's own origin (the OAuth popup URL),
+    // so post back to the opener only if it's the same origin — never '*'.
     res.send(`
       <!doctype html><html><head><title>Connected!</title>
       <style>body{font-family:system-ui;background:#0b0b18;color:#f5f5fb;display:grid;place-items:center;min-height:100vh;text-align:center}
@@ -275,10 +282,10 @@ app.get('/api/oauth/:platform/callback', async (req, res) => {
       @keyframes pop{from{transform:scale(0);opacity:0}}
       </style></head><body><div><div class="ring">✅</div>
       <h1 style="color:#34d399">Connected!</h1>
-      <p>${platform} is now linked to FameForge.</p>
+      <p>${esc(platform)} is now linked to FameForge.</p>
       <script>
         if (window.opener) {
-          window.opener.postMessage({ type: 'OAUTH_SUCCESS', platform: '${platform}' }, '*');
+          window.opener.postMessage({ type: 'OAUTH_SUCCESS', platform: ${JSON.stringify(esc(platform))} }, window.location.origin);
           setTimeout(() => window.close(), 800);
         } else {
           setTimeout(() => { window.location.href = '/'; }, 2000);
@@ -288,7 +295,7 @@ app.get('/api/oauth/:platform/callback', async (req, res) => {
     res.status(400).send(`
       <!doctype html><html><head><title>Error</title>
       <style>body{font-family:system-ui;background:#0b0b18;color:#f5f5fb;display:grid;place-items:center;min-height:100vh;text-align:center}</style>
-      </head><body><div><h1 style="color:#f87171">❌ Error</h1><p>${e.message}</p>
+      </head><body><div><h1 style="color:#f87171">❌ Error</h1><p>${esc(e.message)}</p>
       <script>setTimeout(()=>{window.close()},5000)</script></div></body></html>`);
   }
 });
@@ -333,8 +340,8 @@ app.post('/api/oauth/:platform/auto-configure', authed, async (req, res) => {
 app.put('/api/oauth/:platform/credentials', authed, (req, res) => {
   let { platform } = req.params;
   platform = normalizePlatform(platform);
-  const { clientId, clientSecret, extra } = req.body || {};
-  saveCredentials(req.user.id, platform, clientId, clientSecret, extra);
+  const { clientId, clientSecret, extra, replaceExtra } = req.body || {};
+  saveCredentials(req.user.id, platform, clientId, clientSecret, extra, replaceExtra === true);
   log(req.user, `Updated ${platformName(platform)} API credentials`, 'settings');
   res.json({ ok: true });
 });

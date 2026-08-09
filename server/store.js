@@ -97,7 +97,31 @@ function load() {
   } else {
     db = { users: {} };
   }
+  migrate(db);
   return db;
+}
+
+// Migrate legacy user records to the current state shape. Fields added after a
+// user was first saved are back-filled from defaults so endpoints that assume
+// the full shape (scheduler tick, AI generation, fame score, dashboard) never
+// crash on old db.json files. Idempotent — missing keys are only ever filled.
+export function migrate(db) {
+  for (const u of Object.values(db.users || {})) {
+    if (!u || typeof u !== 'object') continue;
+    const base = defaultState(u.name || '', u.email || '');
+    for (const key of Object.keys(base)) {
+      if (u[key] === undefined) u[key] = base[key];
+    }
+    // An empty channels array is never legitimate (all 12 platform channels
+    // always exist from day one) — backfill it so old records stay usable.
+    if (!Array.isArray(u.channels) || u.channels.length === 0) u.channels = base.channels;
+    for (const key of ['campaigns', 'posts', 'activity']) {
+      if (!Array.isArray(u[key])) u[key] = [];
+    }
+    for (const key of ['settings', 'profile', 'resume', 'site', 'fame']) {
+      if (u[key] && typeof u[key] === 'object') u[key] = { ...base[key], ...u[key] };
+    }
+  }
 }
 
 export function save() {
