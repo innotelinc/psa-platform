@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Megaphone, PenLine, Users, CalendarClock, TrendingUp, Heart, Eye, Share2, MessageCircle, Rocket, Check, Loader2, Globe, Shield, ExternalLink, RefreshCw } from 'lucide-react';
+import { Megaphone, PenLine, Users, CalendarClock, TrendingUp, Heart, Eye, Share2, MessageCircle, Rocket, Check, Loader2, Globe, Shield, ExternalLink, RefreshCw, Film } from 'lucide-react';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
 import { Btn, Toggle, Chip, Empty, Modal, PlatGlyph } from '../components/ui';
@@ -115,6 +115,8 @@ export default function Dashboard() {
   const firstName = user.name.split(' ')[0];
   const isRealOAuth = !!(connectCh && user.platformCredentials?.[connectCh.id]?.configured && !isOAuth1a(connectCh.id));
   const isOAuth1aConfigured = !!(connectCh && user.platformCredentials?.[connectCh.id]?.configured && isOAuth1a(connectCh.id));
+  const MEDIA_ONLY_IDS = ['tiktok', 'instagram', 'pinterest', 'youtube'];
+  const isMediaOnly = !!(connectCh && MEDIA_ONLY_IDS.includes(connectCh.id) && user.platformCredentials?.[connectCh.id]?.configured);
 
   return (
     <div>
@@ -353,6 +355,35 @@ export default function Dashboard() {
                       <span>🔒 <b>Revocable</b> — disconnect anytime; we never see your password</span>
                     </div>
                   </>
+                ) : isMediaOnly ? (
+                  <>
+                    <div className="card-title">
+                      <Film size={14} style={{ color: 'var(--amber)' }} /> {platName(connectCh.id)} media-only platform
+                    </div>
+                    <div className="card-sub" style={{ lineHeight: 1.7 }}>
+                      <b>{platName(connectCh.id)}</b> is connected via OAuth, but text-only posts aren't supported{connectCh.id === 'tiktok' ? ' — TikTok requires video files.' : connectCh.id === 'instagram' ? ' — Instagram requires images or videos.' : connectCh.id === 'pinterest' ? ' — Pinterest requires images or links.' : ' — the YouTube Community Posts API is not publicly available for text.'} FameForge can still <b>fetch your profile info, follower count, and analytics</b> automatically.
+                    </div>
+                    <div className="divider" />
+                    <div className="col small muted">
+                      {connectCh.id === 'tiktok' && (
+                        <>
+                          <span>🎬 <b>Video-first</b> — TikTok's Content Posting API requires a video file; text-only posts aren't supported</span>
+                          <span>🧪 <b>Sandbox mode</b> — TikTok developer apps are limited to 5 test accounts until passing TikTok's audit</span>
+                        </>
+                      )}
+                      {connectCh.id === 'instagram' && (
+                        <span>📸 <b>Image/video required</b> — Instagram's Graph API doesn't support text-only posts</span>
+                      )}
+                      {connectCh.id === 'pinterest' && (
+                        <span>📌 <b>Pin requires media</b> — Pins need an image URL or link; text-only Pins aren't supported</span>
+                      )}
+                      {connectCh.id === 'youtube' && (
+                        <span>▶️ <b>Community Posts</b> — the YouTube v3 Community Posts API endpoint is not publicly available</span>
+                      )}
+                      <span>📊 <b>Profile sync</b> — auto-fetches your handle, followers, and stats on connect</span>
+                      <span>🔄 <b>Re-sync anytime</b> — use the refresh button on your channel card to pull latest stats</span>
+                    </div>
+                  </>
                 ) : isOAuth1aConfigured ? (
                   <>
                     <div className="card-title"><Shield size={14} style={{ color: 'var(--cyan)' }} /> OAuth 1.0a keys configured</div>
@@ -389,16 +420,16 @@ export default function Dashboard() {
               <div className="between">
                 <Btn variant="ghost" onClick={() => setConnectId(null)}>Cancel</Btn>
                 <Btn variant="primary" onClick={connect}>
-                  {isRealOAuth ? <><ExternalLink size={16} /> Authorize via {platName(connectCh.id)}</> : <><Check size={16} /> Connect {platName(connectCh.id)}</>}
+                  {isRealOAuth ? <><ExternalLink size={16} /> Authorize via {platName(connectCh.id)}</> : isMediaOnly ? <><Check size={16} /> Connect & Sync {platName(connectCh.id)}</> : <><Check size={16} /> Connect {platName(connectCh.id)}</>}
                 </Btn>
               </div>
             </div>
           ) : (
             <div className="empty">
               <Loader2 className="spin" size={38} style={{ color: 'var(--pink)', margin: '0 auto 14px' }} />
-              <div style={{ fontWeight: 600 }}>{isRealOAuth ? `Opening ${platName(connectCh.id)} authorization…` : isOAuth1aConfigured ? `Connecting ${platName(connectCh.id)} with your keys…` : `Connecting to ${platName(connectCh.id)}…`}</div>
+              <div style={{ fontWeight: 600 }}>{isRealOAuth ? `Opening ${platName(connectCh.id)} authorization…` : isMediaOnly ? `Syncing ${platName(connectCh.id)} profile…` : isOAuth1aConfigured ? `Connecting ${platName(connectCh.id)} with your keys…` : `Connecting to ${platName(connectCh.id)}…`}</div>
               <div className="muted small mt-2">
-                {isRealOAuth ? 'Complete the authorization in the popup window' : isOAuth1aConfigured ? <>Authenticating with your OAuth 1.0a tokens <span className="dot-flash" /></> : <>Handshaking with {platName(connectCh.id)} servers <span className="dot-flash" /></>}
+                {isRealOAuth ? 'Complete the authorization in the popup window' : isMediaOnly ? <>Fetching your profile & latest stats from {platName(connectCh.id)} <span className="dot-flash" /></> : isOAuth1aConfigured ? <>Authenticating with your OAuth 1.0a tokens <span className="dot-flash" /></> : <>Handshaking with {platName(connectCh.id)} servers <span className="dot-flash" /></>}
               </div>
             </div>
           )}
