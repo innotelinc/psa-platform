@@ -6,4 +6,5 @@ dist/
 .DS_Store
 server/public/
 server/data/
+server/version.json
 *.tgz

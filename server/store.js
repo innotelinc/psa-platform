@@ -29,7 +29,7 @@ export function defaultChannels() {
     enabled: true,
     connected: false,
     handle: '',
-    followers: [128, 312, 864, 45, 210, 38, 96, 61, 0, 0, 0, 0][i] ?? 0,
+    followers: 0,
     posts: 0,
   }));
 }

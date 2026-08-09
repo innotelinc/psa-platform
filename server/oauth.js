@@ -16,9 +16,7 @@ function pkceChallenge() {
   const verifier = base64URL(crypto.randomBytes(48));
   const challenge = base64URL(sha256(verifier));
   return { verifier, challenge };
-}
-
-// Build the authorize URL for a given platform
+}  // Build the authorize URL for a given platform
 export function buildAuthorizeUrl(userId, platformId, redirectBase) {
   const platform = PLATFORM_APIS[platformId];
   if (!platform) throw new Error(`Unknown platform: ${platformId}`);
@@ -35,18 +33,33 @@ export function buildAuthorizeUrl(userId, platformId, redirectBase) {
     if (Date.now() - v.createdAt > 600_000) pendingStates.delete(k);
   }
 
+  // PKCE is only supported by some providers (X, Google, Pinterest, TikTok).
+  // Meta (Facebook/Instagram/Threads) and LinkedIn's classic web flow reject the
+  // code_challenge params, so skip them unless the platform opts in.
+  const usePkce = platform.usePkce !== false;
+
+  // Optional scopes (e.g. LinkedIn w_organization_social) are appended only when
+  // the user opted in — requesting an unprovisioned scope makes LinkedIn reject the
+  // whole authorization. Mirrors the client's legacy detection: users who already
+  // have Company Pages stored from before the opt-in flag existed still count.
+  const orgPostingEnabled = creds.extra?.enableOrgPosting === true || (creds.extra?.linkedinOrgPages?.length || 0) > 0;
+  let scopes = platform.scopes;
+  if (platform.optionalScopes?.length && orgPostingEnabled) {
+    scopes = [scopes, ...platform.optionalScopes].filter(Boolean).join(' ');
+  }
+
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: creds.clientId,
     redirect_uri: redirectUri,
-    scope: platform.scopes,
+    scope: scopes,
     state,
-    code_challenge: challenge,
     ...(platform.extraAuthParams || {}),
   });
 
-  if (!platform.extraAuthParams?.code_challenge_method) {
-    params.set('code_challenge_method', 'S256');
+  if (usePkce) {
+    params.set('code_challenge', challenge);
+    params.set('code_challenge_method', platform.extraAuthParams?.code_challenge_method || 'S256');
   }
 
   return `${platform.authorizeUrl}?${params.toString()}`;
@@ -72,8 +85,12 @@ export async function handleCallback(platformId, code, state, redirectBase) {
     code,
     redirect_uri: redirectUri,
     client_id: creds.clientId,
-    code_verifier: pending.verifier,
   });
+
+  // Only send the PKCE verifier to providers that actually use PKCE (see buildAuthorizeUrl)
+  if (platform.usePkce !== false) {
+    body.set('code_verifier', pending.verifier);
+  }
 
   const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
 
@@ -156,6 +173,9 @@ export async function refreshToken(userId, platformId) {
   if (!platform.clientCredentialsInBody) {
     const basic = Buffer.from(`${creds.clientId}:${creds.clientSecret}`).toString('base64');
     headers['Authorization'] = `Basic ${basic}`;
+  } else if (creds.clientSecret) {
+    // Meta / LinkedIn style token endpoints expect client_secret as a form body param
+    body.set('client_secret', creds.clientSecret);
   }
 
   try {

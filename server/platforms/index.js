@@ -6,11 +6,11 @@ import { getUsers, save } from '../store.js';
 
 // ---- OAuth 1.0a signing helper (for X/Twitter legacy auth) ----
 
-function percentEncode(str) {
+export function percentEncode(str) {
   return encodeURIComponent(str).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
 }
 
-function oauth1aSignature(method, url, params, consumerSecret, tokenSecret) {
+export function oauth1aSignature(method, url, params, consumerSecret, tokenSecret) {
   // Sort params by encoded key, then encoded value
   const sorted = Object.keys(params)
     .sort()
@@ -30,7 +30,7 @@ function oauth1aSignature(method, url, params, consumerSecret, tokenSecret) {
   return crypto.createHmac('sha1', signingKey).update(baseString).digest('base64');
 }
 
-function oauth1aAuthHeader(method, url, params, consumerKey, consumerSecret, token, tokenSecret) {
+export function oauth1aAuthHeader(method, url, params, consumerKey, consumerSecret, token, tokenSecret) {
   const oauthParams = {
     oauth_consumer_key: consumerKey,
     oauth_nonce: crypto.randomBytes(16).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 32),
@@ -106,15 +106,24 @@ export const LINKEDIN = {
   name: 'LinkedIn',
   authorizeUrl: 'https://www.linkedin.com/oauth/v2/authorization',
   tokenUrl: 'https://www.linkedin.com/oauth/v2/accessToken',
+  usePkce: false, // LinkedIn's classic web OAuth flow has no PKCE (only the separate native endpoint)
+  clientCredentialsInBody: true, // token endpoint takes client_id/client_secret in the form body
   scopes: 'openid profile email w_member_social',
-  async post(accessToken, text) {
-    // First get the member URN
-    const meR = await fetch('https://api.linkedin.com/v2/userinfo', {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!meR.ok) throw new Error(`LinkedIn userinfo error ${meR.status}`);
-    const me = await meR.json();
-    const personUrn = `urn:li:person:${me.sub}`;
+  optionalScopes: ['w_organization_social'], // appended only when Company Page posting is enabled in Settings
+  async post(accessToken, text, extra = {}) {
+    // Post as a Company Page (organization) when extra.orgId is set, otherwise as the member
+    let author;
+    if (extra.orgId) {
+      author = `urn:li:organization:${extra.orgId}`;
+    } else {
+      // Resolve the member URN for personal posts
+      const meR = await fetch('https://api.linkedin.com/v2/userinfo', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!meR.ok) throw new Error(`LinkedIn userinfo error ${meR.status}`);
+      const me = await meR.json();
+      author = `urn:li:person:${me.sub}`;
+    }
 
     const r = await fetch('https://api.linkedin.com/rest/posts', {
       method: 'POST',
@@ -125,7 +134,7 @@ export const LINKEDIN = {
         'X-Restli-Protocol-Version': '2.0.0',
       },
       body: JSON.stringify({
-        author: personUrn,
+        author,
         commentary: text,
         visibility: 'PUBLIC',
         lifecycleState: 'PUBLISHED',
@@ -138,13 +147,47 @@ export const LINKEDIN = {
     }
     return r.json();
   },
+  // Company Pages the user administers (requires w_organization_social scope)
+  async getOrganizationPages(accessToken) {
+    const headers = {
+      Authorization: `Bearer ${accessToken}`,
+      'X-Restli-Protocol-Version': '2.0.0',
+    };
+    const aclR = await fetch(
+      'https://api.linkedin.com/rest/organizationalEntityAcls?q=roleAssignee&role=ADMINISTRATOR&state=APPROVED&count=20',
+      { headers }
+    );
+    if (!aclR.ok) return [];
+    const acl = await aclR.json();
+    const orgIds = (acl.elements || [])
+      .map((el) => (el.organizationalTarget || ''))
+      .filter((urn) => urn.startsWith('urn:li:organization:'))
+      .map((urn) => urn.replace('urn:li:organization:', ''))
+      .filter(Boolean);
+    const pages = [];
+    for (const id of orgIds.slice(0, 10)) {
+      try {
+        const r = await fetch(
+          `https://api.linkedin.com/rest/organizations/${id}?projection=(localizedName,vanityName)`,
+          { headers }
+        );
+        if (r.ok) {
+          const org = await r.json();
+          pages.push({ id, name: org.localizedName || `Organization ${id}`, vanityName: org.vanityName || '' });
+        }
+      } catch { /* skip unreadable org */ }
+    }
+    return pages;
+  },
 };
 
 export const FACEBOOK = {
   id: 'facebook',
   name: 'Facebook',
-  authorizeUrl: 'https://www.facebook.com/v21.0/dialog/oauth',
-  tokenUrl: 'https://graph.facebook.com/v21.0/oauth/access_token',
+  authorizeUrl: 'https://www.facebook.com/v26.0/dialog/oauth',
+  tokenUrl: 'https://graph.facebook.com/v26.0/oauth/access_token',
+  usePkce: false, // Meta's OAuth dialog rejects code_challenge/code_challenge_method params
+  clientCredentialsInBody: true, // Meta's token endpoint expects client_id/client_secret in the body, not Basic auth
   scopes: 'pages_manage_posts pages_read_engagement pages_show_list',
   async post(accessToken, text, extra = {}) {
     // Facebook requires a page ID and page access token
@@ -152,7 +195,7 @@ export const FACEBOOK = {
     const pageToken = extra.pageToken || accessToken;
     if (!pageId) throw new Error('Facebook page ID required. Connect a Facebook Page in Settings.');
 
-    const r = await fetch(`https://graph.facebook.com/v21.0/${pageId}/feed`, {
+    const r = await fetch(`https://graph.facebook.com/v26.0/${pageId}/feed`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text, access_token: pageToken }),
@@ -165,7 +208,7 @@ export const FACEBOOK = {
   },
   // After getting user token, fetch pages they manage
   async getPages(accessToken) {
-    const r = await fetch(`https://graph.facebook.com/v21.0/me/accounts?access_token=${accessToken}`);
+    const r = await fetch(`https://graph.facebook.com/v26.0/me/accounts?access_token=${accessToken}`);
     if (!r.ok) return [];
     const data = await r.json();
     return (data.data || []).map((p) => ({ id: p.id, name: p.name, token: p.access_token }));
@@ -175,8 +218,10 @@ export const FACEBOOK = {
 export const INSTAGRAM = {
   id: 'instagram',
   name: 'Instagram',
-  authorizeUrl: 'https://www.facebook.com/v21.0/dialog/oauth',
-  tokenUrl: 'https://graph.facebook.com/v21.0/oauth/access_token',
+  authorizeUrl: 'https://www.facebook.com/v26.0/dialog/oauth',
+  tokenUrl: 'https://graph.facebook.com/v26.0/oauth/access_token',
+  usePkce: false, // Meta's OAuth dialog rejects code_challenge/code_challenge_method params
+  clientCredentialsInBody: true, // Meta's token endpoint expects client_id/client_secret in the body, not Basic auth
   scopes: 'instagram_basic instagram_content_publish pages_read_engagement pages_show_list',
   async post(accessToken, text, extra = {}) {
     // Instagram requires an IG Business Account ID
@@ -192,7 +237,7 @@ export const INSTAGRAM = {
   },
   async getIGAccounts(accessToken, pageId) {
     const r = await fetch(
-      `https://graph.facebook.com/v21.0/${pageId}?fields=instagram_business_account{id,username}&access_token=${accessToken}`
+      `https://graph.facebook.com/v26.0/${pageId}?fields=instagram_business_account{id,username}&access_token=${accessToken}`
     );
     if (!r.ok) return null;
     const data = await r.json();
@@ -203,15 +248,17 @@ export const INSTAGRAM = {
 export const THREADS = {
   id: 'threads',
   name: 'Threads',
-  authorizeUrl: 'https://www.facebook.com/v21.0/dialog/oauth',
-  tokenUrl: 'https://graph.facebook.com/v21.0/oauth/access_token',
+  authorizeUrl: 'https://www.facebook.com/v26.0/dialog/oauth',
+  tokenUrl: 'https://graph.facebook.com/v26.0/oauth/access_token',
+  usePkce: false, // Meta's OAuth dialog rejects code_challenge/code_challenge_method params
+  clientCredentialsInBody: true, // Meta's token endpoint expects client_id/client_secret in the body, not Basic auth
   scopes: 'threads_basic threads_content_publish',
   async post(accessToken, text, extra = {}) {
     const threadsUserId = extra.threadsUserId;
     if (!threadsUserId) throw new Error('Threads user ID required. Connect Threads in Settings.');
 
     // Step 1: Create media container
-    const container = await fetch(`https://graph.facebook.com/v21.0/${threadsUserId}/threads`, {
+    const container = await fetch(`https://graph.facebook.com/v26.0/${threadsUserId}/threads`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ media_type: 'TEXT', text, access_token: accessToken }),
@@ -223,7 +270,7 @@ export const THREADS = {
     const { id: containerId } = await container.json();
 
     // Step 2: Publish the container
-    const pub = await fetch(`https://graph.facebook.com/v21.0/${threadsUserId}/threads_publish`, {
+    const pub = await fetch(`https://graph.facebook.com/v26.0/${threadsUserId}/threads_publish`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ creation_id: containerId, access_token: accessToken }),
@@ -339,41 +386,72 @@ export const TIKTOK = {
  * business account) and store them in the platform's extra credentials.
  */
 export async function autoConfigurePlatform(userId, platformId) {
-  // Dynamic import to avoid circular dependency (oauth.js ↔ platforms/index.js)
+  // Dynamic import to avoid circular dependency (oauth.js <-> platforms/index.js)
   const { getValidAccessToken } = await import('../oauth.js');
-  const token = await getValidAccessToken(userId, platformId);
-  if (!token) return;
-
-  const platform = PLATFORM_APIS[platformId];
-  if (!platform) return;
 
   const users = getUsers();
   const user = users[userId];
   if (!user) return;
   if (!user.platformCredentials) user.platformCredentials = {};
 
+  // Check for OAuth 1.0a creds on X (no OAuth 2.0 token needed)
+  const xCreds = user.platformCredentials.x?.extra || {};
+  const hasOAuth1a = platformId === 'x' && xCreds.consumerKey && xCreds.accessToken;
+
+  const token = hasOAuth1a ? 'oauth1a' : await getValidAccessToken(userId, platformId);
+  if (!token) return;
+
+  const platform = PLATFORM_APIS[platformId];
+  if (!platform) return;
+
   const mergeExtra = (pid, extra) => {
     if (!user.platformCredentials[pid]) return;
     user.platformCredentials[pid].extra = { ...user.platformCredentials[pid].extra, ...extra };
   };
 
-  // X/Twitter: fetch authenticated user profile → update channel handle & followers
+  // X/Twitter: fetch authenticated user profile -> update channel handle & followers
   if (platformId === 'x') {
-    try {
-      const r = await fetch('https://api.twitter.com/2/users/me?user.fields=public_metrics', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (r.ok) {
-        const { data } = await r.json();
-        const ch = user.channels?.find((c) => c.id === 'x');
-        if (ch && data) {
-          if (data.username) ch.handle = '@' + data.username;
-          if (data.public_metrics?.followers_count != null) {
-            ch.followers = data.public_metrics.followers_count;
+    if (hasOAuth1a) {
+      // OAuth 1.0a: use v1.1 account/verify_credentials.json
+      try {
+        const url = 'https://api.twitter.com/1.1/account/verify_credentials.json';
+        const authHeader = oauth1aAuthHeader(
+          'GET', url, {},
+          xCreds.consumerKey, xCreds.consumerSecret || '',
+          xCreds.accessToken, xCreds.accessTokenSecret || ''
+        );
+        const r = await fetch(url, {
+          headers: { Authorization: authHeader },
+        });
+        if (r.ok) {
+          const profile = await r.json();
+          const ch = user.channels?.find((c) => c.id === 'x');
+          if (ch && profile) {
+            if (profile.screen_name) ch.handle = '@' + profile.screen_name;
+            if (profile.followers_count != null) {
+              ch.followers = profile.followers_count;
+            }
           }
         }
-      }
-    } catch { /* profile fetch may fail if users.read scope missing */ }
+      } catch { /* profile fetch may fail */ }
+    } else {
+      // OAuth 2.0: use v2 users/me
+      try {
+        const r = await fetch('https://api.twitter.com/2/users/me?user.fields=public_metrics', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (r.ok) {
+          const { data } = await r.json();
+          const ch = user.channels?.find((c) => c.id === 'x');
+          if (ch && data) {
+            if (data.username) ch.handle = '@' + data.username;
+            if (data.public_metrics?.followers_count != null) {
+              ch.followers = data.public_metrics.followers_count;
+            }
+          }
+        }
+      } catch { /* profile fetch may fail if users.read scope missing */ }
+    }
   }
 
   // LinkedIn: fetch member profile → update channel handle
@@ -390,6 +468,24 @@ export async function autoConfigurePlatform(userId, platformId) {
         }
       }
     } catch { /* profile fetch may fail */ }
+
+    // LinkedIn: fetch Company Pages the user administers → store for the "post as" picker.
+    // Only runs when Company Page posting is enabled (the opt-in w_organization_social scope);
+    // otherwise posts go out as the member and stale org targets are left untouched.
+    // Legacy users with pages stored from before the opt-in flag existed still count.
+    const liExtra = user.platformCredentials.linkedin?.extra || {};
+    const orgPostingEnabled = liExtra.enableOrgPosting === true || (liExtra.linkedinOrgPages?.length || 0) > 0;
+    if (orgPostingEnabled) {
+      try {
+        const pages = await LINKEDIN.getOrganizationPages(token);
+        const current = user.platformCredentials.linkedin?.extra?.orgId;
+        const keep = current === '' || (current && pages.some((p) => p.id === current));
+        mergeExtra('linkedin', {
+          linkedinOrgPages: pages,
+          ...(keep ? {} : { orgId: pages.length ? pages[0].id : '' }),
+        });
+      } catch { /* org pages fetch may fail if w_organization_social scope missing */ }
+    }
   }
 
   // Instagram: fetch pages → get IG business account from first page.
@@ -463,7 +559,7 @@ export async function autoConfigurePlatform(userId, platformId) {
   // Threads: fetch user ID from /me
   if (platformId === 'threads') {
     try {
-      const r = await fetch(`https://graph.facebook.com/v21.0/me?fields=id&access_token=${token}`);
+      const r = await fetch(`https://graph.facebook.com/v26.0/me?fields=id&access_token=${token}`);
       if (r.ok) {
         const data = await r.json();
         if (data.id) mergeExtra('threads', { threadsUserId: data.id });

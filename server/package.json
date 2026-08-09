@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node --watch index.js",
     "start": "node index.js",
-    "test": "DB_IN_MEMORY=1 node --test __tests__/auth.test.js"
+    "test": "DB_IN_MEMORY=1 node --test \"__tests__/*.test.js\""
   },
   "dependencies": {
     "cors": "^2.8.5",

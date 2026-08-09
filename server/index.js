@@ -2,7 +2,8 @@
 import express from 'express';
 import cors from 'cors';
 import crypto from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { addUser, getUsers, updateUser, defaultState, PLATFORMS, save } from './store.js';
@@ -20,7 +21,54 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
+// ------------------------------------------------------------------ build info & health
+// Reports which commit this server was built from (baked into server/version.json
+// by scripts/build-info.mjs or the Docker build). Lets admins spot stale Docker
+// deployments — e.g. an image built before OAuth fixes were committed.
+let buildInfoCache = null;
+function getBuildInfo() {
+  if (buildInfoCache) return buildInfoCache;
+  try {
+    const vf = join(__dirname, 'version.json');
+    if (existsSync(vf)) {
+      buildInfoCache = JSON.parse(readFileSync(vf, 'utf8'));
+    }
+  } catch { /* missing or malformed — fall through to dev fallback */ }
+  // Dev fallback: read the local repo directly so `npm run dev` is never stale.
+  if (!buildInfoCache && process.env.NODE_ENV !== 'production') {
+    const git = (args) => {
+      try { return execFileSync('git', args, { cwd: __dirname, encoding: 'utf8' }).trim(); } catch { return ''; }
+    };
+    const commit = git(['rev-parse', '--short', 'HEAD']);
+    if (commit) {
+      buildInfoCache = {
+        commit,
+        date: git(['log', '-1', '--format=%cI']),
+        describe: git(['describe', '--tags', '--always', '--dirty']),
+        buildTime: new Date().toISOString(),
+        source: 'dev',
+      };
+    }
+  }
+  buildInfoCache = buildInfoCache || { commit: 'unknown', source: 'unknown' };
+  return buildInfoCache;
+}
 
+// Liveness/version probe — used by the Docker HEALTHCHECK (public, no auth)
+app.get('/health', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'fameforge',
+    uptime: Math.round(process.uptime()),
+    time: Date.now(),
+    build: getBuildInfo().commit,
+  });
+});
+
+// Build metadata for the client banner (public, no auth — non-sensitive)
+app.get('/api/version', (req, res) => {
+  res.json(getBuildInfo());
+});
 
 // ------------------------------------------------------------------ helpers
 const uid = () => crypto.randomUUID();
@@ -121,8 +169,10 @@ const sanitize = (u) => {
   if (u.platformCredentials) {
     for (const [pid, cred] of Object.entries(u.platformCredentials)) {
       maskedCreds[pid] = {
-        // X can be configured via OAuth 2.0 clientId OR OAuth 1.0a consumerKey+accessToken in extra
-        configured: !!(cred.clientId || (cred.extra?.consumerKey && cred.extra?.accessToken)),
+        // X uses OAuth 1.0a exclusively; other platforms use OAuth 2.0 clientId
+        configured: pid === 'x'
+          ? !!(cred.extra?.consumerKey && cred.extra?.accessToken)
+          : !!cred.clientId,
         extra: cred.extra || {},
       };
     }
@@ -146,7 +196,9 @@ app.put('/api/channels/:id', authed, (req, res) => {
   const ch = req.user.channels.find((c) => c.id === req.params.id);
   if (!ch) return res.status(404).json({ error: 'Channel not found' });
   Object.assign(ch, req.body || {});
-  if (req.body?.connected === true && !ch.handle) ch.handle = '@' + (req.user.name || 'you').toLowerCase().replace(/\s+/g, '') + '_' + ch.id.slice(0, 2);
+  // Only auto-generate a placeholder handle when no real API credentials exist
+  const hasApiCreds = req.user.platformCredentials?.[ch.id]?.clientId || (req.user.platformCredentials?.[ch.id]?.extra?.consumerKey && req.user.platformCredentials?.[ch.id]?.extra?.accessToken);
+  if (req.body?.connected === true && !ch.handle && !hasApiCreds) ch.handle = '@' + (req.user.name || 'you').toLowerCase().replace(/\s+/g, '') + '_' + ch.id.slice(0, 2);
   if (req.body?.connected !== undefined) log(req.user, req.body.connected ? `Connected ${platformName(ch.id)}` : `Disconnected ${platformName(ch.id)}`, 'channel');
   save();
   res.json(ch);
@@ -269,7 +321,7 @@ app.post('/api/oauth/:platform/auto-configure', authed, async (req, res) => {
     // Return updated channel data so the frontend can refresh without a full reload
     const ch = req.user.channels.find((c) => c.id === platform);
     const creds = req.user.platformCredentials?.[platform];
-    const masked = creds ? { configured: !!(creds.clientId || (creds.extra?.consumerKey && creds.extra?.accessToken)), extra: creds.extra || {} } : null;
+    const masked = creds ? { configured: platform === 'x' ? !!(creds.extra?.consumerKey && creds.extra?.accessToken) : !!creds.clientId, extra: creds.extra || {} } : null;
     log(req.user, `Re-synced ${platformName(platform)} profile`, 'channel');
     res.json({ channel: ch || null, credentials: masked });
   } catch (e) {
@@ -284,6 +336,22 @@ app.put('/api/oauth/:platform/credentials', authed, (req, res) => {
   const { clientId, clientSecret, extra } = req.body || {};
   saveCredentials(req.user.id, platform, clientId, clientSecret, extra);
   log(req.user, `Updated ${platformName(platform)} API credentials`, 'settings');
+  res.json({ ok: true });
+});
+
+// Update platform extra config (page/board/org selections) without touching client creds
+app.post('/api/oauth/:platform/extra', authed, (req, res) => {
+  let { platform } = req.params;
+  platform = normalizePlatform(platform);
+  const patch = req.body?.extra;
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    return res.status(400).json({ error: 'extra object required' });
+  }
+  const creds = req.user.platformCredentials?.[platform];
+  if (!creds) return res.status(404).json({ error: 'Platform not configured' });
+  creds.extra = { ...(creds.extra || {}), ...patch };
+  save();
+  log(req.user, `Updated ${platformName(platform)} posting target`, 'settings');
   res.json({ ok: true });
 });
 
@@ -445,15 +513,25 @@ app.get('/api/dashboard', authed, (req, res) => {
 });
 
 function buildGrowth(u) {
+  // Use real fame history snapshots (recorded daily) for follower growth
+  const history = u.fame?.history || [];
+  if (history.length >= 2) {
+    return history.slice(-14).map((h) => ({
+      date: h.t,
+      followers: h.followers,
+      engagement: 0, // real engagement not historically tracked
+    }));
+  }
+
+  // No history yet — show current follower count as a flat 14-day baseline
   const published = u.posts.filter((p) => p.status === 'published').sort((a, b) => (a.publishedAt || 0) - (b.publishedAt || 0));
+  const totalFollowers = u.channels.reduce((s, c) => s + (c.followers || 0), 0);
   const series = [];
-  let total = u.channels.reduce((s, c) => s + (c.followers || 0), 0);
-  const start = published[0]?.publishedAt || Date.now() - 30 * 864e5;
+  const start = published[0]?.publishedAt || Date.now() - 14 * 864e5;
   for (let i = 0; i < 14; i++) {
     const day = start + i * 864e5;
     const dayPosts = published.filter((p) => p.publishedAt && p.publishedAt < day + 864e5);
-    total += dayPosts.length * (20 + Math.round(Math.random() * 60));
-    series.push({ date: day, followers: total, engagement: dayPosts.length * (3 + Math.round(Math.random() * 9)) });
+    series.push({ date: day, followers: totalFollowers, engagement: dayPosts.length });
   }
   return series;
 }
@@ -492,8 +570,7 @@ async function tick() {
     }
     const due = user.posts.filter((p) => p.status === 'scheduled' && p.scheduledAt && p.scheduledAt <= now);
     for (const p of due) { await publishPost(user, p); changed = true; }
-    // slow follower growth + daily fame snapshot
-    user.channels.forEach((ch) => { if (ch.connected && Math.random() < 0.3) ch.followers += Math.ceil(Math.random() * 3); });
+    // daily fame snapshot (no fake follower growth — only real OAuth data)
     const lastSnap = user.fame.history[user.fame.history.length - 1];
     if (!lastSnap || now - lastSnap.t > 864e5) {
       user.fame.history.push({ t: now, score: fameScore(user), followers: user.channels.reduce((s, c) => s + c.followers, 0) });

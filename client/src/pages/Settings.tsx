@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { KeyRound, Sparkles, Trash2, Save, Bot, Check, Link2, Shield, ExternalLink, Lock, Loader2, Info } from 'lucide-react';
+import { KeyRound, Sparkles, Trash2, Save, Bot, Check, Link2, ExternalLink, Lock, Loader2, Info, RefreshCw, Building2 } from 'lucide-react';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
 import { Btn, Field, Chip, PlatGlyph } from '../components/ui';
@@ -7,6 +7,17 @@ import { platName } from '../lib/platforms';
 
 // Per-platform extra field definitions
 interface ExtraField { key: string; label: string; placeholder: string; help: string; secret?: boolean }
+// Per-platform primary OAuth 2.0 field labels (matches each platform's developer portal terminology)
+const OAUTH_FIELD_NAMES: Record<string, [string, string]> = {
+  linkedin:  ['Client ID', 'Client Secret'],
+  facebook:  ['App ID', 'App Secret'],
+  instagram: ['App ID', 'App Secret'],
+  threads:   ['App ID', 'App Secret'],
+  youtube:   ['Client ID', 'Client Secret'],
+  pinterest: ['App ID', 'App Secret key'],
+  tiktok:    ['Client Key', 'Client Secret'],
+};
+
 const EXTRA_FIELDS: Record<string, ExtraField[]> = {
   x: [
     { key: 'consumerKey', label: 'Consumer Key (API Key)', placeholder: 'From X Developer Portal — OAuth 1.0a', help: 'OAuth 1.0a Consumer Key. Use this for legacy user-key auth instead of OAuth 2.0. Generate in the X Developer Portal under Keys and Tokens.' },
@@ -141,8 +152,16 @@ export default function Settings() {
                 const storedExtra = creds?.extra || {};
                 const draft = draftPlatforms[pid] || { clientId: '', clientSecret: '', extra: {} };
                 const extraFields = EXTRA_FIELDS[pid] || [];
-                const hasDraft = draft.clientId || draft.clientSecret || extraFields.some((f) => f.key in (draft.extra || {}));
                 const configured = creds?.configured;
+                // X/Twitter: uses OAuth 1.0a exclusively (no Client ID/Secret)
+                const isX = pid === 'x';
+                const hasDraft = isX
+                  ? extraFields.some((f) => f.key in (draft.extra || {}))
+                  : (draft.clientId || draft.clientSecret || extraFields.some((f) => f.key in (draft.extra || {})));
+                const [idLabel, secretLabel] = OAUTH_FIELD_NAMES[pid] || ['Client ID', 'Client Secret'];
+                // LinkedIn Company Page posting is opt-in (needs the w_organization_social scope).
+                // Legacy users who already have pages stored count as enabled.
+                const orgEnabled = pid === 'linkedin' && (storedExtra.enableOrgPosting === true || (storedExtra.linkedinOrgPages?.length || 0) > 0);
                 return (
                   <div key={pid} style={{ background: 'var(--panel)', border: `1px solid ${configured ? 'rgba(52,211,153,0.35)' : 'var(--stroke)'}`, borderRadius: 14, padding: 16 }}>
                     <div className="between">
@@ -152,7 +171,11 @@ export default function Settings() {
                           <div style={{ fontWeight: 600, fontSize: 13.5 }}>{platName(pid)}</div>
                           <div className="faint small mt-1">
                             {configured ? (
-                              <span style={{ color: 'var(--green)' }}>✅ Configured & ready</span>
+                              isX ? (
+                                <span style={{ color: 'var(--green)' }}>✅ OAuth 1.0a configured & ready</span>
+                              ) : (
+                                <span style={{ color: 'var(--green)' }}>✅ Configured & ready</span>
+                              )
                             ) : (
                               <span>{hasDraft ? '⚠️ Unsaved changes' : 'No credentials set — simulated mode'}</span>
                             )}
@@ -162,7 +185,8 @@ export default function Settings() {
                       <div className="row" style={{ gap: 6 }}>
                         {configured && (
                           <button className="btn ghost sm" style={{ fontSize: 11 }} onClick={async () => {
-                            await api.savePlatformCredentials(pid, { clientId: '', clientSecret: '', extra: {} });
+                            // X: clear OAuth 1.0a extra fields only; other platforms: clear clientId/clientSecret
+                            await api.savePlatformCredentials(pid, { clientId: '', clientSecret: '', extra: isX ? {} : storedExtra });
                             setDraftPlatforms((p) => { const n = { ...p }; delete n[pid]; return n; });
                             await refresh();
                             toast(`Cleared ${platName(pid)} credentials`);
@@ -171,7 +195,8 @@ export default function Settings() {
                         <button className="btn primary sm" style={{ fontSize: 11 }} disabled={savingPlatform === pid || !hasDraft} onClick={async () => {
                           setSavingPlatform(pid);
                           try {
-                            await api.savePlatformCredentials(pid, { clientId: draft.clientId, clientSecret: draft.clientSecret, extra: { ...storedExtra, ...(draft.extra || {}) } });
+                            const mergedExtra = { ...storedExtra, ...(draft.extra || {}) };
+                            await api.savePlatformCredentials(pid, { clientId: draft.clientId || '', clientSecret: draft.clientSecret || '', extra: mergedExtra });
                             await refresh();
                             toast(`${platName(pid)} API credentials saved 🔑`);
                             setDraftPlatforms((p) => { const n = { ...p }; delete n[pid]; return n; });
@@ -180,17 +205,25 @@ export default function Settings() {
                         }}><Save size={12} /> Save</button>
                       </div>
                     </div>
-                    <div className="grid mt-2" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                      <input className="input" style={{ fontSize: 12, padding: '8px 10px' }} type="password" placeholder="Client ID"
-                        value={draft.clientId}
-                        onChange={(e) => setDraftPlatforms((p) => ({ ...p, [pid]: { ...(p[pid] || {}), clientId: e.target.value, extra: (p[pid] || {}).extra || draft.extra || {} } }))} />
-                      <input className="input" style={{ fontSize: 12, padding: '8px 10px' }} type="password" placeholder="Client Secret"
-                        value={draft.clientSecret}
-                        onChange={(e) => setDraftPlatforms((p) => ({ ...p, [pid]: { ...(p[pid] || {}), clientSecret: e.target.value, extra: (p[pid] || {}).extra || draft.extra || {} } }))} />
-                    </div>
+                    {!isX && (
+                      <div className="grid mt-2" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <input className="input" style={{ fontSize: 12, padding: '8px 10px' }} type="password" placeholder={idLabel}
+                          value={draft.clientId}
+                          onChange={(e) => setDraftPlatforms((p) => ({ ...p, [pid]: { ...(p[pid] || {}), clientId: e.target.value, extra: (p[pid] || {}).extra || draft.extra || {} } }))} />
+                        <input className="input" style={{ fontSize: 12, padding: '8px 10px' }} type="password" placeholder={secretLabel}
+                          value={draft.clientSecret}
+                          onChange={(e) => setDraftPlatforms((p) => ({ ...p, [pid]: { ...(p[pid] || {}), clientSecret: e.target.value, extra: (p[pid] || {}).extra || draft.extra || {} } }))} />
+                      </div>
+                    )}
                     {extraFields.length > 0 && (
                       <>
                         <div className="divider" style={{ margin: '8px 0 4px' }} />
+                        {pid === 'x' && (
+                          <div className="row small" style={{ gap: 4, marginBottom: 4 }}>
+                            <span className="muted" style={{ fontSize: 10.5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, color: 'var(--cyan)' }}>OAuth 1.0a Credentials</span>
+                            <span className="faint" title="Paste your X Developer Portal Consumer Key & Access Token. Keys sign API requests directly — no browser popup needed." style={{ cursor: 'help' }}><Info size={10} /></span>
+                          </div>
+                        )}
                         {extraFields.map((ef) => (
                           <div key={ef.key} className="mt-1">
                             <div className="row small" style={{ gap: 4, marginBottom: 4 }}>
@@ -215,6 +248,79 @@ export default function Settings() {
                         ))}
                       </>
                     )}
+                    {pid === 'linkedin' && configured && (
+                      <>
+                        <div className="divider" style={{ margin: '8px 0 4px' }} />
+                        <div className="row mt-1" style={{ gap: 10, alignItems: 'center' }}>
+                          <button
+                            className={`chip ${orgEnabled ? 'grad' : ''}`}
+                            style={{ cursor: 'pointer', padding: '8px 14px', fontSize: 12, whiteSpace: 'nowrap' }}
+                            onClick={async () => {
+                              try {
+                                if (orgEnabled) {
+                                  await api.setPlatformExtra('linkedin', { enableOrgPosting: false, orgId: '', linkedinOrgPages: [] });
+                                  await refresh();
+                                  toast('Company Page posting off — posts go out as your profile 👤');
+                                } else {
+                                  await api.setPlatformExtra('linkedin', { enableOrgPosting: true });
+                                  await refresh();
+                                  toast('Company Page posting on — disconnect & re-connect LinkedIn to grant the scope 🔐');
+                                }
+                              } catch (e: any) { toast(e.message, 'bad'); }
+                            }}
+                          >
+                            {orgEnabled ? <Check size={12} /> : <Building2 size={12} />} Company Page posting {orgEnabled ? 'on' : 'off'}
+                          </button>
+                          <span className="faint small" style={{ fontSize: 10.5, lineHeight: 1.5 }} title="Requires the Community Management API product in your LinkedIn app (Developer Portal → Products). After enabling, disconnect & re-connect LinkedIn to re-authorize with the extra scope.">
+                            <Info size={10} style={{ verticalAlign: -1 }} /> Needs the Community Management API product; re-connect LinkedIn after enabling.
+                          </span>
+                        </div>
+                        {orgEnabled && (
+                          <div className="mt-1">
+                          <div className="row small" style={{ gap: 4, marginBottom: 4 }}>
+                            <span className="muted" style={{ fontSize: 11 }}>Post as</span>
+                            <span className="faint" title="LinkedIn posts go out from your personal profile, or from a Company Page you administer (needs the w_organization_social scope)." style={{ cursor: 'help' }}><Info size={10} /></span>
+                          </div>
+                          <div className="row" style={{ gap: 8 }}>
+                            {(storedExtra.linkedinOrgPages?.length || 0) > 0 ? (
+                              <select
+                                className="select"
+                                style={{ fontSize: 12, padding: '8px 10px', flex: 1 }}
+                                value={storedExtra.orgId || ''}
+                                onChange={async (e) => {
+                                  try {
+                                    // '' = personal profile. Send the empty string so the key survives JSON serialization
+                                    // (undefined would be dropped and the server would keep the previous orgId).
+                                    const orgId = e.target.value || '';
+                                    await api.setPlatformExtra('linkedin', { ...storedExtra, orgId });
+                                    await refresh();
+                                    const page = storedExtra.linkedinOrgPages?.find((p: any) => p.id === orgId);
+                                    toast(orgId ? `LinkedIn posts will go out as ${page ? '“' + page.name + '”' : 'your company page'} 🏢` : 'LinkedIn posts will go out as your personal profile 👤');
+                                  } catch (err: any) { toast(err.message, 'bad'); }
+                                }}
+                              >
+                                <option value="">👤 Personal profile</option>
+                                {storedExtra.linkedinOrgPages?.map((pg: any) => (
+                                  <option key={pg.id} value={pg.id}>🏢 {pg.name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className="faint small" style={{ fontSize: 11, lineHeight: 1.5, flex: 1 }}>
+                                No Company Pages found yet. Create/admin a page on LinkedIn, then hit Sync. (If you connected before, disconnect & re-connect to grant the w_organization_social scope.)
+                              </span>
+                            )}
+                            <button className="btn ghost sm" style={{ fontSize: 11, whiteSpace: 'nowrap' }} onClick={async () => {
+                              try {
+                                await api.oauthAutoConfigure('linkedin');
+                                await refresh();
+                                toast('LinkedIn profile & pages re-synced 🔄');
+                              } catch (e: any) { toast(e.message, 'bad'); }
+                            }}><RefreshCw size={11} /> Sync</button>
+                          </div>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 );
               })}
@@ -232,7 +338,7 @@ export default function Settings() {
                 </span>
               </div>
               <div className="faint small mt-3">
-                🔒 Credentials are stored encrypted in your local server data. The OAuth redirect URI is <code style={{ background: 'rgba(255,255,255,0.07)', padding: '2px 6px', borderRadius: 5 }}>http://localhost:3000/api/oauth/&#123;platform&#125;/callback</code> — add this to each platform's allowed redirect URIs.
+                🔒 Credentials are stored encrypted in your local server data. The OAuth redirect URI is <code style={{ background: 'rgba(255,255,255,0.07)', padding: '2px 6px', borderRadius: 5 }}>https://psa.innotel.us/api/oauth/&#123;platform&#125;/callback</code> — add this to each platform's allowed redirect URIs.
               </div>
             </div>
           </div>

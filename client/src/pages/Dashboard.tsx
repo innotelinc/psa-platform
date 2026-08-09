@@ -39,9 +39,16 @@ export default function Dashboard() {
         setConnecting(false);
         return;
       }
+      const timeout = setTimeout(() => {
+        window.removeEventListener('message', handler);
+        if (!popup.closed) popup.close();
+        setConnecting(false);
+        toast('OAuth timed out — please try again', 'bad');
+      }, 180_000);
       const handler = (e: MessageEvent) => {
         if (e.data?.type === 'OAUTH_SUCCESS' && e.data?.platform === connectId) {
           window.removeEventListener('message', handler);
+          clearTimeout(timeout);
           popup.close();
           setConnecting(false);
           setConnectId(null);
@@ -50,12 +57,6 @@ export default function Dashboard() {
         }
       };
       window.addEventListener('message', handler);
-      setTimeout(() => {
-        window.removeEventListener('message', handler);
-        if (!popup.closed) popup.close();
-        setConnecting(false);
-        toast('OAuth timed out — please try again', 'bad');
-      }, 180_000);
     } catch (e: any) {
       toast(e.message, 'bad');
       setConnecting(false);
@@ -78,8 +79,10 @@ export default function Dashboard() {
     setTimeout(async () => {
       try {
         await api.updateChannel(connectId!, { connected: true });
+        // Attempt to fetch real profile data (silently fails if no OAuth token)
+        try { await api.oauthAutoConfigure(connectId!); } catch {}
         await refresh(); await refreshDash();
-        toast(`${platName(connectId!)} connected ⚡`);
+        toast(platName(connectId!) + ' connected \u26a1');
         setConnectId(null);
       } catch (e: any) { toast(e.message, 'bad'); }
       setConnecting(false);

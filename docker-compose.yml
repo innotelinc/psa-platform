@@ -3,6 +3,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        GIT_DATE: ${GIT_DATE:-}
+        GIT_DESCRIBE: ${GIT_DESCRIBE:-}
+        BUILD_TIME: ${BUILD_TIME:-}
     container_name: psa-platform
     ports:
       - "${PORT:-3000}:3000"
@@ -12,6 +17,7 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - HOST=0.0.0.0
+      - OAUTH_REDIRECT_BASE=https://psa.innotel.us
     restart: unless-stopped
 
 volumes:

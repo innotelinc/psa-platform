@@ -79,7 +79,7 @@ psa-platform/
 ├── server/                    # Express REST API
 │   ├── index.js               # Routes: auth, state, channels, OAuth, campaigns, posts, AI
 │   ├── aiEngine.js            # Built-in content generator (12 tones × 11 styles)
-│   ├── oauth.js               # Unified OAuth 2.0 PKCE handler
+│   ├── oauth.js               # Unified OAuth 2.0 handler (PKCE where supported)
 │   ├── postEngine.js          # Real API posting + simulation fallback
 │   ├── store.js               # JSON file persistence
 │   ├── platforms/             # Per-platform API configs
@@ -184,6 +184,35 @@ docker run -d -p 8080:3000 -e PORT=3000 -v psa-data:/app/server/data --name psa-
 
 > **Note:** The internal container port stays `3000`. Only change the host port mapping (`-p HOST:CONTAINER`).
 
+#### Build freshness — never run a stale image again
+
+The app bakes the **git commit it was built from** into the image, and shows a warning banner in the UI (plus `GET /health` and `GET /api/version`) when the deployed build is old, built from uncommitted changes, or missing version metadata. This catches the classic "I forgot to rebuild" drift that breaks OAuth and other fixes.
+
+**Deploy with one command (recommended):**
+
+```bash
+./scripts/deploy.sh   # bakes git commit → docker compose build → up -d
+```
+
+Or pass the build args manually:
+
+```bash
+docker compose build \
+  --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) \
+  --build-arg GIT_DESCRIBE=$(git describe --tags --always --dirty) \
+  --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+docker compose up -d
+```
+
+Check what's actually running:
+
+```bash
+curl http://localhost:3000/health       # liveness + build commit
+curl http://localhost:3000/api/version  # full build metadata
+```
+
+Local builds (`npm run build`) generate the same metadata automatically via `scripts/build-info.mjs`.
+
 ---
 
 ## 🔐 Setting Up Real Platform APIs
@@ -197,7 +226,7 @@ docker run -d -p 8080:3000 -e PORT=3000 -v psa-data:/app/server/data --name psa-
 | Platform | API Support | Notes |
 |---|---|---|
 | X (Twitter) | ✅ OAuth 2.0 PKCE | Free tier, ~$0.015/post |
-| LinkedIn | ✅ OAuth 2.0 | Needs company page |
+| LinkedIn | ✅ OAuth 2.0 | Posts as personal profile or Company Page |
 | Facebook | ✅ OAuth 2.0 | Needs Facebook Page |
 | Instagram | ⚠️ Media only | Business account required |
 | Threads | ✅ OAuth 2.0 | Meta's newest API |
@@ -216,7 +245,7 @@ docker run -d -p 8080:3000 -e PORT=3000 -v psa-data:/app/server/data --name psa-
 | Frontend | React 18, TypeScript, Vite, React Router, Lucide Icons |
 | Backend | Node.js, Express, scrypt auth |
 | AI | Built-in engine + optional OpenAI/Claude API |
-| Auth | OAuth 2.0 PKCE (8 platforms) |
+| Auth | OAuth 2.0 (PKCE for X, Google, Pinterest, TikTok) |
 | Storage | JSON file persistence |
 | Container | Docker multi-stage build |
 
