@@ -31,16 +31,19 @@ export async function postToPlatform(userId, channelId, text) {
     };
   }
 
-  // Get a valid access token
-  const token = await getValidAccessToken(userId, channelId);
-  if (!token) {
-    return { success: true, real: false, simulated: true };
-  }
-
-  // Get platform-specific extra config (page ID, board ID, etc.)
+  // Get platform-specific extra config (page ID, board ID, OAuth 1.0a keys, etc.)
   const users = getUsers();
   const user = users[userId];
   const creds = user?.platformCredentials?.[channelId]?.extra || {};
+
+  // X/Twitter OAuth 1.0a: uses consumer keys directly, no OAuth2 bearer token needed
+  const hasOAuth1a = channelId === 'x' && creds.consumerKey && creds.accessToken;
+
+  // Get a valid access token (only needed for OAuth 2.0 flows)
+  const token = hasOAuth1a ? 'oauth1a' : await getValidAccessToken(userId, channelId);
+  if (!token) {
+    return { success: true, real: false, simulated: true };
+  }
 
   try {
     const result = await platform.post(token, text, creds);

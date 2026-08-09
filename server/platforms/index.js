@@ -1,6 +1,59 @@
 // Platform definitions — OAuth endpoints, scopes, and API posting endpoints.
 // Each platform must expose: id, name, authorizeUrl, tokenUrl, scopes, and a post() function.
 
+import crypto from 'node:crypto';
+import { getUsers, save } from '../store.js';
+
+// ---- OAuth 1.0a signing helper (for X/Twitter legacy auth) ----
+
+function percentEncode(str) {
+  return encodeURIComponent(str).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
+function oauth1aSignature(method, url, params, consumerSecret, tokenSecret) {
+  // Sort params by encoded key, then encoded value
+  const sorted = Object.keys(params)
+    .sort()
+    .reduce((acc, key) => {
+      acc.push(percentEncode(key) + '=' + percentEncode(params[key]));
+      return acc;
+    }, [])
+    .join('&');
+
+  const baseString = [
+    method.toUpperCase(),
+    percentEncode(url),
+    percentEncode(sorted),
+  ].join('&');
+
+  const signingKey = percentEncode(consumerSecret) + '&' + percentEncode(tokenSecret || '');
+  return crypto.createHmac('sha1', signingKey).update(baseString).digest('base64');
+}
+
+function oauth1aAuthHeader(method, url, params, consumerKey, consumerSecret, token, tokenSecret) {
+  const oauthParams = {
+    oauth_consumer_key: consumerKey,
+    oauth_nonce: crypto.randomBytes(16).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 32),
+    oauth_signature_method: 'HMAC-SHA1',
+    oauth_timestamp: String(Math.floor(Date.now() / 1000)),
+    oauth_token: token,
+    oauth_version: '1.0',
+  };
+
+  // Combine oauth params with request params for signature
+  const sigParams = { ...oauthParams, ...params };
+  const signature = oauth1aSignature(method, url, sigParams, consumerSecret, tokenSecret);
+
+  // Build header — oauth params only, with signature
+  const headerParams = { ...oauthParams, oauth_signature: signature };
+  return 'OAuth ' + Object.keys(headerParams)
+    .sort()
+    .map((k) => percentEncode(k) + '="' + percentEncode(headerParams[k]) + '"')
+    .join(', ');
+}
+
+// ---- Platform definitions ----
+
 export const X = {
   id: 'x',
   name: 'X / Twitter',
@@ -9,7 +62,32 @@ export const X = {
   scopes: 'tweet.write users.read offline.access',
   extraAuthParams: { code_challenge_method: 'S256' },
   clientCredentialsInBody: true, // public client — no Basic auth header
-  async post(accessToken, text) {
+  async post(accessToken, text, extra = {}) {
+    // --- OAuth 1.0a path (legacy user keys) ---
+    if (extra.consumerKey && extra.accessToken) {
+      const url = 'https://api.twitter.com/1.1/statuses/update.json';
+      const bodyParams = { status: text };
+      const authHeader = oauth1aAuthHeader(
+        'POST', url, bodyParams,
+        extra.consumerKey, extra.consumerSecret || '',
+        extra.accessToken, extra.accessTokenSecret || ''
+      );
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: authHeader,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams(bodyParams).toString(),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.errors?.[0]?.message || err.error || `X API v1.1 error ${r.status}`);
+      }
+      return r.json();
+    }
+
+    // --- OAuth 2.0 path (default Bearer token) ---
     const r = await fetch('https://api.twitter.com/2/tweets', {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -252,6 +330,139 @@ export const TIKTOK = {
     );
   },
 };
+
+// ---- Post-OAuth auto-configuration: fetch pages / boards / accounts ----
+
+/**
+ * After a successful OAuth connection, automatically fetch platform-specific
+ * configuration (Facebook pages, Pinterest boards, Threads user ID, Instagram
+ * business account) and store them in the platform's extra credentials.
+ */
+export async function autoConfigurePlatform(userId, platformId) {
+  // Dynamic import to avoid circular dependency (oauth.js ↔ platforms/index.js)
+  const { getValidAccessToken } = await import('../oauth.js');
+  const token = await getValidAccessToken(userId, platformId);
+  if (!token) return;
+
+  const platform = PLATFORM_APIS[platformId];
+  if (!platform) return;
+
+  const users = getUsers();
+  const user = users[userId];
+  if (!user) return;
+  if (!user.platformCredentials) user.platformCredentials = {};
+
+  const mergeExtra = (pid, extra) => {
+    if (!user.platformCredentials[pid]) return;
+    user.platformCredentials[pid].extra = { ...user.platformCredentials[pid].extra, ...extra };
+  };
+
+  // X/Twitter: fetch authenticated user profile → update channel handle & followers
+  if (platformId === 'x') {
+    try {
+      const r = await fetch('https://api.twitter.com/2/users/me?user.fields=public_metrics', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (r.ok) {
+        const { data } = await r.json();
+        const ch = user.channels?.find((c) => c.id === 'x');
+        if (ch && data) {
+          if (data.username) ch.handle = '@' + data.username;
+          if (data.public_metrics?.followers_count != null) {
+            ch.followers = data.public_metrics.followers_count;
+          }
+        }
+      }
+    } catch { /* profile fetch may fail if users.read scope missing */ }
+  }
+
+  // LinkedIn: fetch member profile → update channel handle
+  if (platformId === 'linkedin') {
+    try {
+      const r = await fetch('https://api.linkedin.com/v2/userinfo', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (r.ok) {
+        const me = await r.json();
+        const ch = user.channels?.find((c) => c.id === 'linkedin');
+        if (ch && me.name) {
+          ch.handle = '/in/' + me.name.toLowerCase().replace(/\s+/g, '-');
+        }
+      }
+    } catch { /* profile fetch may fail */ }
+  }
+
+  // Instagram: fetch pages → get IG business account from first page.
+  // Also cross-populate Facebook's pageId if not already set.
+  if (platformId === 'instagram') {
+    try {
+      const pages = await FACEBOOK.getPages(token);
+      if (pages.length > 0) {
+        mergeExtra('facebook', { pageId: pages[0].id, pageToken: pages[0].token });
+        const ig = await INSTAGRAM.getIGAccounts(token, pages[0].id);
+        if (ig) mergeExtra('instagram', { igUserId: ig.id });
+      }
+    } catch { /* pages or IG account may not be available */ }
+  }
+
+  // Facebook: fetch pages → store pageId + pageToken. Also cross-populate Instagram.
+  if (platformId === 'facebook') {
+    try {
+      const pages = await FACEBOOK.getPages(token);
+      if (pages.length > 0) {
+        mergeExtra('facebook', { pageId: pages[0].id, pageToken: pages[0].token });
+        // Try to find Instagram business account connected to the first page
+        try {
+          const ig = await INSTAGRAM.getIGAccounts(token, pages[0].id);
+          if (ig) mergeExtra('instagram', { igUserId: ig.id });
+        } catch { /* Instagram may not be connected to any page */ }
+      }
+    } catch { /* pages fetch may fail if permissions missing */ }
+  }
+
+  // YouTube: fetch channel snippet & stats → update handle & subscribers
+  if (platformId === 'youtube') {
+    try {
+      const r = await fetch(
+        'https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&mine=true',
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (r.ok) {
+        const data = await r.json();
+        const ch = user.channels?.find((c) => c.id === 'youtube');
+        const item = data.items?.[0];
+        if (ch && item) {
+          if (item.snippet?.customUrl) ch.handle = item.snippet.customUrl;
+          else if (item.snippet?.title) ch.handle = '/channel/' + item.snippet.title;
+          if (item.statistics?.subscriberCount != null) {
+            ch.followers = parseInt(item.statistics.subscriberCount, 10) || 0;
+          }
+        }
+      }
+    } catch { /* channel fetch may fail */ }
+  }
+
+  // Threads: fetch user ID from /me
+  if (platformId === 'threads') {
+    try {
+      const r = await fetch(`https://graph.facebook.com/v21.0/me?fields=id&access_token=${token}`);
+      if (r.ok) {
+        const data = await r.json();
+        if (data.id) mergeExtra('threads', { threadsUserId: data.id });
+      }
+    } catch { /* may fail if token lacks threads_basic scope */ }
+  }
+
+  // Pinterest: fetch boards → store first board's ID
+  if (platformId === 'pinterest') {
+    try {
+      const boards = await PINTEREST.getBoards(token);
+      if (boards.length > 0) mergeExtra('pinterest', { boardId: boards[0].id });
+    } catch { /* boards fetch may fail */ }
+  }
+
+  save();
+}
 
 // Map of all real-platform integrations keyed by channel ID
 export const PLATFORM_APIS = {

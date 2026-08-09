@@ -1,9 +1,33 @@
 import { useState } from 'react';
-import { KeyRound, Sparkles, Trash2, Save, Bot, Check, Link2, Shield, ExternalLink, Lock, Loader2 } from 'lucide-react';
+import { KeyRound, Sparkles, Trash2, Save, Bot, Check, Link2, Shield, ExternalLink, Lock, Loader2, Info } from 'lucide-react';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
 import { Btn, Field, Chip, PlatGlyph } from '../components/ui';
 import { platName } from '../lib/platforms';
+
+// Per-platform extra field definitions
+interface ExtraField { key: string; label: string; placeholder: string; help: string; secret?: boolean }
+const EXTRA_FIELDS: Record<string, ExtraField[]> = {
+  x: [
+    { key: 'consumerKey', label: 'Consumer Key (API Key)', placeholder: 'From X Developer Portal — OAuth 1.0a', help: 'OAuth 1.0a Consumer Key. Use this for legacy user-key auth instead of OAuth 2.0. Generate in the X Developer Portal under Keys and Tokens.' },
+    { key: 'consumerSecret', label: 'Consumer Secret (API Key Secret)', placeholder: 'From X Developer Portal — OAuth 1.0a', help: 'OAuth 1.0a Consumer Secret. Keep this private — never share it.', secret: true },
+    { key: 'accessToken', label: 'Access Token', placeholder: 'Generated in X Developer Portal', help: 'OAuth 1.0a Access Token. Generate via the X Developer Portal for your app under "Authentication Tokens".' },
+    { key: 'accessTokenSecret', label: 'Access Token Secret', placeholder: 'Generated in X Developer Portal', help: 'OAuth 1.0a Access Token Secret. Generate alongside the Access Token in the X Developer Portal.', secret: true },
+  ],
+  facebook: [
+    { key: 'pageId', label: 'Facebook Page ID', placeholder: 'e.g. 1234567890', help: 'The numeric ID of the Facebook Page to post to. Find it in Page Settings → Page Transparency.' },
+    { key: 'pageToken', label: 'Page Access Token', placeholder: '(auto-fetched after OAuth)', help: 'Auto-populated after OAuth. Only set manually if the auto-fetch fails.', secret: true },
+  ],
+  instagram: [
+    { key: 'igUserId', label: 'Instagram Business Account ID', placeholder: 'e.g. 17841400000000000', help: 'The numeric IG Business Account ID. Find it in Facebook Business Settings → Instagram Accounts, or auto-fetched after connecting Facebook.' },
+  ],
+  threads: [
+    { key: 'threadsUserId', label: 'Threads User ID', placeholder: 'e.g. 1234567890', help: 'Your numeric Threads user ID. After OAuth, this is your Threads profile ID.' },
+  ],
+  pinterest: [
+    { key: 'boardId', label: 'Pinterest Board ID', placeholder: 'e.g. 1234567890', help: 'The numeric ID of the board to pin to. Find it in the board URL or auto-fetched after OAuth.' },
+  ],
+};
 
 export default function Settings() {
   const { user, refresh, toast, logout } = useStore();
@@ -114,8 +138,10 @@ export default function Settings() {
             <div className="col mt-3" style={{ gap: 12 }}>
               {['x', 'linkedin', 'facebook', 'instagram', 'threads', 'youtube', 'pinterest', 'tiktok'].map((pid) => {
                 const creds = user.platformCredentials?.[pid];
-                const draft = draftPlatforms[pid] || { clientId: '', clientSecret: '' };
-                const hasDraft = draft.clientId || draft.clientSecret;
+                const storedExtra = creds?.extra || {};
+                const draft = draftPlatforms[pid] || { clientId: '', clientSecret: '', extra: {} };
+                const extraFields = EXTRA_FIELDS[pid] || [];
+                const hasDraft = draft.clientId || draft.clientSecret || extraFields.some((f) => f.key in (draft.extra || {}));
                 const configured = creds?.configured;
                 return (
                   <div key={pid} style={{ background: 'var(--panel)', border: `1px solid ${configured ? 'rgba(52,211,153,0.35)' : 'var(--stroke)'}`, borderRadius: 14, padding: 16 }}>
@@ -137,6 +163,7 @@ export default function Settings() {
                         {configured && (
                           <button className="btn ghost sm" style={{ fontSize: 11 }} onClick={async () => {
                             await api.savePlatformCredentials(pid, { clientId: '', clientSecret: '', extra: {} });
+                            setDraftPlatforms((p) => { const n = { ...p }; delete n[pid]; return n; });
                             await refresh();
                             toast(`Cleared ${platName(pid)} credentials`);
                           }}><Trash2 size={12} /></button>
@@ -144,7 +171,7 @@ export default function Settings() {
                         <button className="btn primary sm" style={{ fontSize: 11 }} disabled={savingPlatform === pid || !hasDraft} onClick={async () => {
                           setSavingPlatform(pid);
                           try {
-                            await api.savePlatformCredentials(pid, { clientId: draft.clientId, clientSecret: draft.clientSecret });
+                            await api.savePlatformCredentials(pid, { clientId: draft.clientId, clientSecret: draft.clientSecret, extra: { ...storedExtra, ...(draft.extra || {}) } });
                             await refresh();
                             toast(`${platName(pid)} API credentials saved 🔑`);
                             setDraftPlatforms((p) => { const n = { ...p }; delete n[pid]; return n; });
@@ -156,11 +183,38 @@ export default function Settings() {
                     <div className="grid mt-2" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                       <input className="input" style={{ fontSize: 12, padding: '8px 10px' }} type="password" placeholder="Client ID"
                         value={draft.clientId}
-                        onChange={(e) => setDraftPlatforms((p) => ({ ...p, [pid]: { ...(p[pid] || {}), clientId: e.target.value } }))} />
+                        onChange={(e) => setDraftPlatforms((p) => ({ ...p, [pid]: { ...(p[pid] || {}), clientId: e.target.value, extra: (p[pid] || {}).extra || draft.extra || {} } }))} />
                       <input className="input" style={{ fontSize: 12, padding: '8px 10px' }} type="password" placeholder="Client Secret"
                         value={draft.clientSecret}
-                        onChange={(e) => setDraftPlatforms((p) => ({ ...p, [pid]: { ...(p[pid] || {}), clientSecret: e.target.value } }))} />
+                        onChange={(e) => setDraftPlatforms((p) => ({ ...p, [pid]: { ...(p[pid] || {}), clientSecret: e.target.value, extra: (p[pid] || {}).extra || draft.extra || {} } }))} />
                     </div>
+                    {extraFields.length > 0 && (
+                      <>
+                        <div className="divider" style={{ margin: '8px 0 4px' }} />
+                        {extraFields.map((ef) => (
+                          <div key={ef.key} className="mt-1">
+                            <div className="row small" style={{ gap: 4, marginBottom: 4 }}>
+                              <span className="muted" style={{ fontSize: 11 }}>{ef.label}</span>
+                              <span className="faint" title={ef.help} style={{ cursor: 'help' }}><Info size={10} /></span>
+                            </div>
+                            <input
+                              className="input"
+                              style={{ fontSize: 12, padding: '8px 10px' }}
+                              type={ef.secret ? 'password' : 'text'}
+                              placeholder={ef.placeholder}
+                              value={draft.extra?.[ef.key] ?? storedExtra[ef.key] ?? ''}
+                              onChange={(e) => setDraftPlatforms((p) => ({
+                                ...p,
+                                [pid]: {
+                                  ...(p[pid] || { clientId: '', clientSecret: '' }),
+                                  extra: { ...((p[pid] || {}).extra || storedExtra), [ef.key]: e.target.value },
+                                },
+                              }))}
+                            />
+                          </div>
+                        ))}
+                      </>
+                    )}
                   </div>
                 );
               })}

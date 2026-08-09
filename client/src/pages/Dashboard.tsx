@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Megaphone, PenLine, Users, CalendarClock, TrendingUp, Heart, Eye, Share2, MessageCircle, Rocket, Check, Loader2, Globe, Shield, ExternalLink } from 'lucide-react';
+import { Megaphone, PenLine, Users, CalendarClock, TrendingUp, Heart, Eye, Share2, MessageCircle, Rocket, Check, Loader2, Globe, Shield, ExternalLink, RefreshCw } from 'lucide-react';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
 import { Btn, Toggle, Chip, Empty, Modal, PlatGlyph } from '../components/ui';
@@ -14,6 +14,7 @@ export default function Dashboard() {
   const [connectId, setConnectId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [busyToggle, setBusyToggle] = useState<string | null>(null);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
 
   const growth = useMemo(() => (dashboard?.growth || []).map((g) => ({ label: new Date(g.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), value: g.followers })), [dashboard]);
   const eng = useMemo(() => (dashboard?.growth || []).map((g) => ({ label: new Date(g.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), value: g.engagement })), [dashboard]);
@@ -61,9 +62,15 @@ export default function Dashboard() {
     }
   };
 
+  const isOAuth1a = (pid: string) => {
+    const extra = user?.platformCredentials?.[pid]?.extra;
+    return !!(extra?.consumerKey && extra?.accessToken);
+  };
+
   const connect = async () => {
     const creds = user?.platformCredentials?.[connectId!];
-    if (creds?.configured) {
+    // OAuth 1.0a: tokens are provided directly — skip popup, mark connected
+    if (creds?.configured && !isOAuth1a(connectId!)) {
       await startOAuth();
       return;
     }
@@ -79,9 +86,20 @@ export default function Dashboard() {
     }, 1600);
   };
 
+  const resync = async (id: string) => {
+    setSyncingId(id);
+    try {
+      await api.oauthAutoConfigure(id);
+      await refresh(); await refreshDash();
+      toast(`${platName(id)} profile synced 🔄`);
+    } catch (e: any) { toast(e.message || 'Sync failed', 'bad'); }
+    setSyncingId(null);
+  };
+
   const disconnect = async (id: string) => {
     const creds = user?.platformCredentials?.[id];
-    if (creds?.configured) {
+    // OAuth 1.0a doesn't use OAuth 2.0 tokens — just mark disconnected
+    if (creds?.configured && !isOAuth1a(id)) {
       await api.oauthDisconnect(id);
     } else {
       await api.updateChannel(id, { connected: false });
@@ -95,7 +113,8 @@ export default function Dashboard() {
   const connectCh = user.channels.find((c) => c.id === connectId);
   const socialChannels = user.channels;
   const firstName = user.name.split(' ')[0];
-  const isRealOAuth = !!(connectCh && user.platformCredentials?.[connectCh.id]?.configured);
+  const isRealOAuth = !!(connectCh && user.platformCredentials?.[connectCh.id]?.configured && !isOAuth1a(connectCh.id));
+  const isOAuth1aConfigured = !!(connectCh && user.platformCredentials?.[connectCh.id]?.configured && isOAuth1a(connectCh.id));
 
   return (
     <div>
@@ -223,11 +242,24 @@ export default function Dashboard() {
               </div>
               <div className="channel-foot">
                 <span className="channel-followers"><Users size={13} /> {fmtNum(ch.followers)} followers</span>
-                {ch.connected ? (
-                  <Btn variant="ghost" size="sm" onClick={() => disconnect(ch.id)}>Disconnect</Btn>
-                ) : (
-                  <Btn variant="primary" size="sm" disabled={!ch.enabled} onClick={() => setConnectId(ch.id)}>Connect</Btn>
-                )}
+                <div className="row" style={{ gap: 6 }}>
+                  {ch.connected && hasApi && (
+                    <button
+                      className="btn ghost sm"
+                      style={{ fontSize: 11 }}
+                      disabled={syncingId === ch.id}
+                      onClick={() => resync(ch.id)}
+                      title="Re-fetch profile & stats from API"
+                    >
+                      {syncingId === ch.id ? <Loader2 className="spin" size={12} /> : <RefreshCw size={12} />}
+                    </button>
+                  )}
+                  {ch.connected ? (
+                    <Btn variant="ghost" size="sm" onClick={() => disconnect(ch.id)}>Disconnect</Btn>
+                  ) : (
+                    <Btn variant="primary" size="sm" disabled={!ch.enabled} onClick={() => setConnectId(ch.id)}>Connect</Btn>
+                  )}
+                </div>
               </div>
             </div>
           );
@@ -321,6 +353,19 @@ export default function Dashboard() {
                       <span>🔒 <b>Revocable</b> — disconnect anytime; we never see your password</span>
                     </div>
                   </>
+                ) : isOAuth1aConfigured ? (
+                  <>
+                    <div className="card-title"><Shield size={14} style={{ color: 'var(--cyan)' }} /> OAuth 1.0a keys configured</div>
+                    <div className="card-sub" style={{ lineHeight: 1.7 }}>
+                      Your <b>OAuth 1.0a Consumer Key & Access Token</b> are configured for {platName(connectCh.id)}. No browser authorization is needed — FameForge will sign API requests directly using your keys.
+                    </div>
+                    <div className="divider" />
+                    <div className="col small muted">
+                      <span>🔑 <b>OAuth 1.0a</b> — legacy user-key authentication</span>
+                      <span>✅ <b>Post tweets</b> — using your configured API keys & tokens</span>
+                      <span>🔒 <b>Stored locally</b> — keys never leave your server</span>
+                    </div>
+                  </>
                 ) : (
                   <>
                     <div className="card-sub" style={{ lineHeight: 1.7 }}>
@@ -344,16 +389,16 @@ export default function Dashboard() {
               <div className="between">
                 <Btn variant="ghost" onClick={() => setConnectId(null)}>Cancel</Btn>
                 <Btn variant="primary" onClick={connect}>
-                  {isRealOAuth ? <><ExternalLink size={16} /> Authorize via {platName(connectCh.id)}</> : <><Check size={16} /> Authorize {platName(connectCh.id)}</>}
+                  {isRealOAuth ? <><ExternalLink size={16} /> Authorize via {platName(connectCh.id)}</> : <><Check size={16} /> Connect {platName(connectCh.id)}</>}
                 </Btn>
               </div>
             </div>
           ) : (
             <div className="empty">
               <Loader2 className="spin" size={38} style={{ color: 'var(--pink)', margin: '0 auto 14px' }} />
-              <div style={{ fontWeight: 600 }}>{isRealOAuth ? `Opening ${platName(connectCh.id)} authorization…` : `Connecting to ${platName(connectCh.id)}…`}</div>
+              <div style={{ fontWeight: 600 }}>{isRealOAuth ? `Opening ${platName(connectCh.id)} authorization…` : isOAuth1aConfigured ? `Connecting ${platName(connectCh.id)} with your keys…` : `Connecting to ${platName(connectCh.id)}…`}</div>
               <div className="muted small mt-2">
-                {isRealOAuth ? 'Complete the authorization in the popup window' : <>Handshaking with {platName(connectCh.id)} servers <span className="dot-flash" /></>}
+                {isRealOAuth ? 'Complete the authorization in the popup window' : isOAuth1aConfigured ? <>Authenticating with your OAuth 1.0a tokens <span className="dot-flash" /></> : <>Handshaking with {platName(connectCh.id)} servers <span className="dot-flash" /></>}
               </div>
             </div>
           )}

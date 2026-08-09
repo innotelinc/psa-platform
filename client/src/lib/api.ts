@@ -53,4 +53,6 @@ export const api = {
   oauthDisconnect: (platform: string) => request<{ ok: boolean }>(`/oauth/${platform}/disconnect`, 'POST'),
   savePlatformCredentials: (platform: string, creds: { clientId: string; clientSecret: string; extra?: any }) =>
     request<{ ok: boolean }>(`/oauth/${platform}/credentials`, 'PUT', creds),
+  oauthAutoConfigure: (platform: string) =>
+    request<{ channel: any; credentials: any }>(`/oauth/${platform}/auto-configure`, 'POST'),
 };

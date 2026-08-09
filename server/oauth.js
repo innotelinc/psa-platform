@@ -105,9 +105,36 @@ export async function handleCallback(platformId, code, state, redirectBase) {
     scope: data.scope || platform.scopes,
   };
 
+  // Meta platforms (Facebook / Instagram / Threads): exchange short-lived
+  // user token (~2h) for a long-lived token (~60 days) via fb_exchange_token.
+  if (platform.tokenUrl.includes('graph.facebook.com') && tokens.accessToken) {
+    try {
+      const llBody = new URLSearchParams({
+        grant_type: 'fb_exchange_token',
+        fb_exchange_token: tokens.accessToken,
+        client_id: creds.clientId,
+        client_secret: creds.clientSecret,
+      });
+      const llR = await fetch(platform.tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: llBody.toString(),
+      });
+      if (llR.ok) {
+        const llData = await llR.json();
+        tokens.accessToken = llData.access_token;
+        tokens.expiresAt = llData.expires_in
+          ? Date.now() + llData.expires_in * 1000
+          : Date.now() + 60 * 864e5; // fallback: ~60 days
+        // Store the long-lived token as refresh_token so it can be re-exchanged later
+        tokens.refreshToken = llData.access_token;
+      }
+    } catch { /* long-lived exchange is best-effort; short-lived token still works */ }
+  }
+
   // Store tokens on the channel
   storeTokens(pending.userId, platformId, tokens);
-  return { platformId, tokens };
+  return { platformId, tokens, userId: pending.userId };
 }
 
 // Refresh an expired access token

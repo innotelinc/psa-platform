@@ -9,6 +9,7 @@ import { addUser, getUsers, updateUser, defaultState, PLATFORMS, save } from './
 import * as ai from './aiEngine.js';
 import { buildAuthorizeUrl, handleCallback, getConnectionStatus, disconnectPlatform, saveCredentials } from './oauth.js';
 import { postToPlatform } from './postEngine.js';
+import { autoConfigurePlatform } from './platforms/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -120,7 +121,8 @@ const sanitize = (u) => {
   if (u.platformCredentials) {
     for (const [pid, cred] of Object.entries(u.platformCredentials)) {
       maskedCreds[pid] = {
-        configured: !!(cred.clientId),
+        // X can be configured via OAuth 2.0 clientId OR OAuth 1.0a consumerKey+accessToken in extra
+        configured: !!(cred.clientId || (cred.extra?.consumerKey && cred.extra?.accessToken)),
         extra: cred.extra || {},
       };
     }
@@ -204,7 +206,10 @@ app.get('/api/oauth/:platform/callback', async (req, res) => {
   }
 
   try {
-    await handleCallback(platform, code, state, REDIRECT_BASE);
+    const { userId } = await handleCallback(platform, code, state, REDIRECT_BASE);
+    // Auto-fetch platform-specific config (pages, boards, accounts)
+    // Await so extra fields are populated before the Dashboard refreshes
+    await autoConfigurePlatform(userId, platform).catch(() => {});
     res.send(`
       <!doctype html><html><head><title>Connected!</title>
       <style>body{font-family:system-ui;background:#0b0b18;color:#f5f5fb;display:grid;place-items:center;min-height:100vh;text-align:center}
@@ -246,6 +251,22 @@ app.post('/api/oauth/:platform/disconnect', authed, (req, res) => {
   log(req.user, `Disconnected ${platformName(platform)} (OAuth tokens cleared)`, 'channel');
   save();
   res.json({ ok: true });
+});
+
+// On-demand re-sync: re-fetch platform profile, pages, boards, etc.
+app.post('/api/oauth/:platform/auto-configure', authed, async (req, res) => {
+  const { platform } = req.params;
+  try {
+    await autoConfigurePlatform(req.user.id, platform);
+    // Return updated channel data so the frontend can refresh without a full reload
+    const ch = req.user.channels.find((c) => c.id === platform);
+    const creds = req.user.platformCredentials?.[platform];
+    const masked = creds ? { configured: !!(creds.clientId || (creds.extra?.consumerKey && creds.extra?.accessToken)), extra: creds.extra || {} } : null;
+    log(req.user, `Re-synced ${platformName(platform)} profile`, 'channel');
+    res.json({ channel: ch || null, credentials: masked });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Auto-configure failed' });
+  }
 });
 
 // Save platform developer credentials (Client ID + Secret)
