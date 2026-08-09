@@ -165,9 +165,14 @@ app.put('/api/channels', authed, (req, res) => {
 // ------------------------------------------------------------------ OAuth
 const REDIRECT_BASE = process.env.OAUTH_REDIRECT_BASE || PUBLIC_URL;
 
+// Platform ID aliases — some OAuth providers use different names (e.g. "twitter" vs "x")
+const PLATFORM_ALIASES = { twitter: 'x' };
+const normalizePlatform = (p) => PLATFORM_ALIASES[p] || p;
+
 // Start OAuth flow — returns the URL the frontend should redirect to
 app.post('/api/oauth/:platform/authorize', authed, (req, res) => {
-  const { platform } = req.params;
+  let { platform } = req.params;
+  platform = normalizePlatform(platform);
   try {
     const url = buildAuthorizeUrl(req.user.id, platform, REDIRECT_BASE);
     res.json({ url });
@@ -178,7 +183,8 @@ app.post('/api/oauth/:platform/authorize', authed, (req, res) => {
 
 // OAuth callback — the provider redirects here after user authorization
 app.get('/api/oauth/:platform/callback', async (req, res) => {
-  const { platform } = req.params;
+  let { platform } = req.params;
+  platform = normalizePlatform(platform);
   const { code, state, error, error_description } = req.query;
 
   // Validate platform param is a known, safe value
@@ -246,7 +252,8 @@ app.get('/api/oauth/status', authed, (req, res) => {
 
 // Disconnect a platform
 app.post('/api/oauth/:platform/disconnect', authed, (req, res) => {
-  const { platform } = req.params;
+  let { platform } = req.params;
+  platform = normalizePlatform(platform);
   disconnectPlatform(req.user.id, platform);
   log(req.user, `Disconnected ${platformName(platform)} (OAuth tokens cleared)`, 'channel');
   save();
@@ -255,7 +262,8 @@ app.post('/api/oauth/:platform/disconnect', authed, (req, res) => {
 
 // On-demand re-sync: re-fetch platform profile, pages, boards, etc.
 app.post('/api/oauth/:platform/auto-configure', authed, async (req, res) => {
-  const { platform } = req.params;
+  let { platform } = req.params;
+  platform = normalizePlatform(platform);
   try {
     await autoConfigurePlatform(req.user.id, platform);
     // Return updated channel data so the frontend can refresh without a full reload
@@ -271,7 +279,8 @@ app.post('/api/oauth/:platform/auto-configure', authed, async (req, res) => {
 
 // Save platform developer credentials (Client ID + Secret)
 app.put('/api/oauth/:platform/credentials', authed, (req, res) => {
-  const { platform } = req.params;
+  let { platform } = req.params;
+  platform = normalizePlatform(platform);
   const { clientId, clientSecret, extra } = req.body || {};
   saveCredentials(req.user.id, platform, clientId, clientSecret, extra);
   log(req.user, `Updated ${platformName(platform)} API credentials`, 'settings');
