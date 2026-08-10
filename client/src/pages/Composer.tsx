@@ -32,6 +32,7 @@ export default function Composer() {
   const [copied, setCopied] = useState<string | null>(null);
   const [resultPost, setResultPost] = useState<Post | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [resendingAll, setResendingAll] = useState(false);
 
   if (!user) return null;
   const available = user.channels.filter((c) => c.enabled && (c.connected || c.id === 'website' || c.id === 'resume'));
@@ -146,6 +147,26 @@ export default function Composer() {
       return (b.createdAt || 0) - (a.createdAt || 0);
     });
   }, [user]);
+
+  const failedPosts = useMemo(() => history.filter((p) => p.status === 'failed'), [history]);
+
+  // Retry every failed post in one go (batch endpoint on the server)
+  const resendAllFailed = async () => {
+    if (!failedPosts.length) return;
+    if (!confirm(`Resend ${failedPosts.length} failed post${failedPosts.length === 1 ? '' : 's'} now?`)) return;
+    setResendingAll(true);
+    try {
+      const { resent, stillFailed } = await api.resendFailedPosts();
+      await refresh(); await refreshDash();
+      if (resent) toast(`Resent ${resent} post${resent === 1 ? '' : 's'} ✅`, 'good');
+      if (stillFailed) toast(`${stillFailed} still failed — check the errors below`, 'bad');
+      if (!resent && !stillFailed) toast('No failed posts to resend');
+    } catch (e: any) {
+      toast(e?.message || 'Resend failed', 'bad');
+    } finally {
+      setResendingAll(false);
+    }
+  };
 
   return (
     <div>
@@ -306,7 +327,14 @@ export default function Composer() {
           </div>
 
           <div className="card">
-            <div className="card-title">Posts & history <span className="chip sm" style={{ marginLeft: 8 }}>{history.length}</span></div>
+            <div className="between" style={{ alignItems: 'flex-start' }}>
+              <div className="card-title" style={{ marginBottom: 0 }}>Posts & history <span className="chip sm" style={{ marginLeft: 8 }}>{history.length}</span></div>
+              {failedPosts.length > 0 && (
+                <Btn variant="primary" size="sm" onClick={resendAllFailed} disabled={resendingAll} title={`Retry ${failedPosts.length} failed post${failedPosts.length === 1 ? '' : 's'}`}>
+                  {resendingAll ? <Loader2 className="spin" size={13} /> : <RefreshCcw size={13} />} Resend {failedPosts.length} failed
+                </Btn>
+              )}
+            </div>
             <div className="card-sub">Scheduled, drafts and published — resend or delete any post.</div>
             <div className="col mt-3">
               {history.length === 0 && <Empty icon="🕐" title="No posts yet" sub="Scheduled & draft posts will show up here." />}

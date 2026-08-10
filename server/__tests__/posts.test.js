@@ -31,16 +31,18 @@ describe('posts — publish flow', () => {
 
   before(() => {
     seedUser('publish-user', { channels: channelsFor('x', 'linkedin') });
-    seedUser('fail-user', {
-      channels: channelsFor('x'),
-      platformCredentials: {
-        x: {
-          clientId: 'x-id',
-          clientSecret: 'x-secret',
-          extra: { consumerKey: 'ck', consumerSecret: 'cs', accessToken: 'at', accessTokenSecret: 'ats' },
+    for (const id of ['fail-user', 'batch-user']) {
+      seedUser(id, {
+        channels: channelsFor('x'),
+        platformCredentials: {
+          x: {
+            clientId: 'x-id',
+            clientSecret: 'x-secret',
+            extra: { consumerKey: 'ck', consumerSecret: 'cs', accessToken: 'at', accessTokenSecret: 'ats' },
+          },
         },
-      },
-    });
+      });
+    }
     oldFetch = globalThis.fetch;
   });
 
@@ -105,6 +107,69 @@ describe('posts — publish flow', () => {
     } finally {
       globalThis.fetch = oldFetch;
     }
+  });
+
+  it('POST /api/posts/resend-failed retries every failed post in one call', async () => {
+    const failFetch = async () =>
+      new Response(JSON.stringify({ errors: [{ message: 'Forbidden' }] }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+    // Create two failed posts for the batch user
+    for (let i = 0; i < 2; i++) {
+      globalThis.fetch = failFetch;
+      try {
+        const created = await request.post('/api/posts')
+          .set('Authorization', 'Bearer tok-batch-user')
+          .send({ channelIds: ['x'], content: `Batch retry ${i}`, publish: true })
+          .expect(200);
+        assert.strictEqual(created.body.status, 'failed');
+      } finally {
+        globalThis.fetch = oldFetch;
+      }
+    }
+
+    // API still failing → resend-all keeps them failed
+    globalThis.fetch = failFetch;
+    try {
+      const retry = await request.post('/api/posts/resend-failed')
+        .set('Authorization', 'Bearer tok-batch-user')
+        .expect(200);
+      assert.strictEqual(retry.body.resent, 0);
+      assert.strictEqual(retry.body.stillFailed, 2);
+    } finally {
+      globalThis.fetch = oldFetch;
+    }
+
+    // API now succeeds → resend-all publishes both
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ data: { id: '123' } }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    try {
+      const retry = await request.post('/api/posts/resend-failed')
+        .set('Authorization', 'Bearer tok-batch-user')
+        .expect(200);
+      assert.strictEqual(retry.body.resent, 2);
+      assert.strictEqual(retry.body.stillFailed, 0);
+      assert.strictEqual(retry.body.posts.length, 2);
+      for (const p of retry.body.posts) {
+        assert.strictEqual(p.status, 'published');
+        assert.strictEqual(p.results[0].ok, true);
+      }
+    } finally {
+      globalThis.fetch = oldFetch;
+    }
+
+    // Nothing left failed → no-op
+    const empty = await request.post('/api/posts/resend-failed')
+      .set('Authorization', 'Bearer tok-batch-user')
+      .expect(200);
+    assert.strictEqual(empty.body.resent, 0);
+    assert.strictEqual(empty.body.stillFailed, 0);
+    assert.deepStrictEqual(empty.body.posts, []);
   });
 
   it('DELETE /api/posts/:id removes any post (history cleanup)', async () => {

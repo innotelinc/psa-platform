@@ -462,6 +462,26 @@ app.post('/api/posts/:id/publish', authed, async (req, res) => {
   res.json(p);
 });
 
+// Resend every failed post in one call ("Resend all failed")
+app.post('/api/posts/resend-failed', authed, async (req, res) => {
+  const failed = req.user.posts.filter((p) => p.status === 'failed');
+  if (!failed.length) return res.json({ resent: 0, stillFailed: 0, posts: [] });
+  let resent = 0;
+  let stillFailed = 0;
+  for (const p of failed) {
+    try {
+      await publishPost(req.user, p);
+      if (p.status === 'failed') stillFailed++;
+      else resent++;
+    } catch {
+      save(); // keep any partially-collected results so the user can retry
+      stillFailed++;
+    }
+  }
+  save();
+  res.json({ resent, stillFailed, posts: failed });
+});
+
 // ------------------------------------------------------------------ AI
 app.post('/api/ai/generate', authed, async (req, res) => {
   const { kind = 'post' } = req.body || {};
