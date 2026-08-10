@@ -50,15 +50,25 @@ export interface Campaign {
 
 export interface Engagement { likes: number; comments: number; shares: number; reach: number; rate: number; }
 
+export interface PostResult {
+  channelId: string;
+  ok: boolean; // sent via the real platform API
+  real: boolean;
+  simulated: boolean; // fell back to simulation (no creds / media-only)
+  error?: string; // set when the real API call failed
+}
+
 export interface Post {
   id: string;
   channelIds: string[];
   content: string;
-  status: 'draft' | 'scheduled' | 'published';
+  status: 'draft' | 'scheduled' | 'published' | 'failed';
   scheduledAt: number | null;
   publishedAt: number | null;
   campaignId: string | null;
   engagement: Engagement | null;
+  // absent on legacy posts created before per-channel results existed
+  results?: PostResult[] | null;
   createdAt: number;
 }
 

@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Sparkles, Send, CalendarClock, Wand2, Hash, Loader2, Copy, Check, Trash2, Zap } from 'lucide-react';
+import { Sparkles, Send, CalendarClock, Wand2, Hash, Loader2, Copy, Check, Trash2, Zap, AlertTriangle, RefreshCcw } from 'lucide-react';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
 import { fallbackPost, fallbackHeadlines } from '../lib/ai';
-import { Btn, Field, Chip, Empty, PlatGlyph, Avatar } from '../components/ui';
+import { Btn, Field, Chip, Empty, PlatGlyph, Avatar, Modal } from '../components/ui';
 import { platName, plat, fmtTime, timeAgo } from '../lib/platforms';
 import type { Post } from '../lib/types';
 
@@ -30,6 +30,8 @@ export default function Composer() {
   const [headlines, setHeadlines] = useState<string[]>([]);
   const [headBusy, setHeadBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [resultPost, setResultPost] = useState<Post | null>(null);
+  const [publishing, setPublishing] = useState(false);
 
   if (!user) return null;
   const available = user.channels.filter((c) => c.enabled && (c.connected || c.id === 'website' || c.id === 'resume'));
@@ -78,24 +80,72 @@ export default function Composer() {
     if (!channelIds.length) return toast('Pick at least one channel', 'bad');
     if (!content.trim()) return toast('Write something first', 'bad');
     const scheduledAt = mode === 'later' && at ? new Date(at).getTime() : null;
-    await api.createPost({ channelIds, content, scheduledAt, campaignId: mode === 'campaign' ? campaignId : null });
-    toast(scheduledAt ? `Queued for ${fmtTime(scheduledAt)} 🕐` : 'Published across all channels 🎉');
-    setContent(''); setChannelIds([]); setGen([]);
-    await refresh(); await refreshDash();
+    setPublishing(true);
+    try {
+      // publish:true makes the server actually send immediately (mode 'now');
+      // otherwise the post stays queued as scheduled/draft.
+      const created = await api.createPost({
+        channelIds, content, scheduledAt,
+        campaignId: mode === 'campaign' ? campaignId : null,
+        publish: !scheduledAt && mode === 'now',
+      });
+      if (scheduledAt) {
+        toast(`Queued for ${fmtTime(scheduledAt)} 🕐`);
+      } else if (mode === 'campaign') {
+        toast('Saved to campaign queue 🎯');
+      } else {
+        showResult(created);
+      }
+      setContent(''); setChannelIds([]); setGen([]);
+      await refresh(); await refreshDash();
+    } catch (e: any) {
+      toast(e?.message || 'Publish failed', 'bad');
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  // Per-channel confirmation after a publish/resend attempt
+  const showResult = (post: Post) => {
+    setResultPost(post);
+    const results = post.results || [];
+    const sent = results.filter((r) => r.ok).length;
+    const simulated = results.filter((r) => !r.ok && !r.error).length;
+    const failed = results.filter((r) => r.error).length;
+    const summary = [sent && `${sent} sent`, simulated && `${simulated} simulated`, failed && `${failed} failed`].filter(Boolean).join(', ');
+    const nothingSent = sent === 0 && simulated === 0;
+    toast(summary ? `Post: ${summary}` : 'Post not sent', failed || nothingSent ? 'bad' : 'good');
   };
 
   const deletePost = async (p: Post) => {
+    if ((p.status === 'published' || p.status === 'failed') && !confirm('Remove this post from your history? (Already-sent posts stay live on the platform.)')) return;
     await api.deletePost(p.id);
+    if (resultPost?.id === p.id) setResultPost(null);
+    toast('Post deleted');
     await refresh(); await refreshDash();
   };
 
+  // Publish/resend a queued or previously-published post, then show the confirmation
   const publishNow = async (p: Post) => {
-    await api.publishPost(p.id);
-    toast('Post published now ⚡');
-    await refresh(); await refreshDash();
+    try {
+      const updated = await api.publishPost(p.id);
+      showResult(updated);
+      await refresh(); await refreshDash();
+    } catch (e: any) {
+      toast(e?.message || 'Publish failed', 'bad');
+    }
   };
 
-  const queue = useMemo(() => [...user.posts].filter((p) => p.status !== 'published').sort((a, b) => (a.scheduledAt || 0) - (b.scheduledAt || 0)), [user]);
+  // Full post history — scheduled first, then newest first; every post is resendable/deletable
+  const history = useMemo(() => {
+    const all = [...user.posts];
+    return all.sort((a, b) => {
+      const aSched = a.status === 'scheduled' ? a.scheduledAt || Infinity : Infinity;
+      const bSched = b.status === 'scheduled' ? b.scheduledAt || Infinity : Infinity;
+      if (aSched !== bSched) return aSched - bSched;
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+  }, [user]);
 
   return (
     <div>
@@ -227,8 +277,8 @@ export default function Composer() {
                 </select>
               )}
             </div>
-            <Btn variant="primary" size="lg" className="mt-4" style={{ width: '100%' }} onClick={publish} disabled={!channelIds.length || !content.trim()}>
-              <Send size={17} /> {mode === 'later' ? 'Schedule Post' : mode === 'campaign' ? 'Queue to Campaign' : `Publish to ${channelIds.length || 0} channel${channelIds.length === 1 ? '' : 's'}`}
+            <Btn variant="primary" size="lg" className="mt-4" style={{ width: '100%' }} onClick={publish} disabled={!channelIds.length || !content.trim() || publishing}>
+              {publishing ? <Loader2 className="spin" size={17} /> : <Send size={17} />} {mode === 'later' ? 'Schedule Post' : mode === 'campaign' ? 'Queue to Campaign' : `Publish to ${channelIds.length || 0} channel${channelIds.length === 1 ? '' : 's'}`}
             </Btn>
           </div>
         </div>
@@ -256,31 +306,110 @@ export default function Composer() {
           </div>
 
           <div className="card">
-            <div className="card-title">Queue & drafts <span className="chip sm" style={{ marginLeft: 8 }}>{queue.length}</span></div>
+            <div className="card-title">Posts & history <span className="chip sm" style={{ marginLeft: 8 }}>{history.length}</span></div>
+            <div className="card-sub">Scheduled, drafts and published — resend or delete any post.</div>
             <div className="col mt-3">
-              {queue.length === 0 && <Empty icon="🕐" title="Queue is empty" sub="Scheduled & draft posts will show up here." />}
-              {queue.map((p) => (
-                <div key={p.id} className="tl-item">
-                  <div className="tl-dot" style={{ background: p.status === 'scheduled' ? 'rgba(34,211,238,0.14)' : 'rgba(255,255,255,0.08)', color: p.status === 'scheduled' ? 'var(--cyan)' : 'var(--muted)' }}>
-                    <CalendarClock size={15} />
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="tl-text" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.content.slice(0, 80)}</div>
-                    <div className="row small mt-2">
-                      {p.channelIds.slice(0, 3).map((id) => <span key={id} className="chip" style={{ padding: '2px 7px', fontSize: 10 }}>{platName(id)}</span>)}
-                      <span className="faint" style={{ marginLeft: 'auto' }}>{p.status === 'scheduled' ? fmtTime(p.scheduledAt) : timeAgo(p.createdAt)}</span>
+              {history.length === 0 && <Empty icon="🕐" title="No posts yet" sub="Scheduled & draft posts will show up here." />}
+              {history.map((p) => {
+                const dotTone =
+                  p.status === 'published' ? 'rgba(52,211,153,0.14)' :
+                  p.status === 'failed' ? 'rgba(239,68,68,0.14)' :
+                  p.status === 'scheduled' ? 'rgba(34,211,238,0.14)' : 'rgba(255,255,255,0.08)';
+                const dotColor =
+                  p.status === 'published' ? 'var(--green)' :
+                  p.status === 'failed' ? '#f87171' :
+                  p.status === 'scheduled' ? 'var(--cyan)' : 'var(--muted)';
+                return (
+                  <div key={p.id} className="tl-item">
+                    <div className="tl-dot" style={{ background: dotTone, color: dotColor }}>
+                      {p.status === 'published' ? <Check size={15} /> : p.status === 'failed' ? <AlertTriangle size={15} /> : <CalendarClock size={15} />}
                     </div>
-                    <div className="row mt-2" style={{ gap: 6 }}>
-                      {p.status === 'scheduled' && <Btn variant="primary" size="sm" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => publishNow(p)}>Post now</Btn>}
-                      <Btn variant="ghost" size="sm" style={{ padding: '4px 8px' }} onClick={() => deletePost(p)}><Trash2 size={12} /></Btn>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="tl-text" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.content.slice(0, 80)}</div>
+                      <div className="row small mt-2 wrap" style={{ gap: 4 }}>
+                        {p.channelIds.map((id) => {
+                          const r = p.results?.find((x) => x.channelId === id);
+                          const tone = !r ? 'blue' : r.ok ? 'green' : r.error ? 'red' : 'orange';
+                          return (
+                            <span key={id} className={`chip ${tone}`} style={{ padding: '2px 7px', fontSize: 10 }} title={r?.error || ''}>
+                              {r ? (r.ok ? '✅' : r.error ? '❌' : '⚠️') : '•'} {platName(id)}
+                            </span>
+                          );
+                        })}
+                        <span className="faint" style={{ marginLeft: 'auto' }}>
+                          {p.status === 'scheduled' ? fmtTime(p.scheduledAt) : p.publishedAt ? timeAgo(p.publishedAt) : timeAgo(p.createdAt)}
+                        </span>
+                      </div>
+                      <div className="row mt-2" style={{ gap: 6 }}>
+                        {(p.status === 'scheduled' || p.status === 'draft') && (
+                          <Btn variant="primary" size="sm" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => publishNow(p)}>Post now</Btn>
+                        )}
+                        {p.status === 'failed' && (
+                          <Btn variant="primary" size="sm" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => publishNow(p)}><RefreshCcw size={11} /> Resend</Btn>
+                        )}
+                        {p.status === 'published' && (
+                          <Btn variant={p.results?.some((r) => r.error) ? 'primary' : 'ghost'} size="sm" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => publishNow(p)}>
+                            <RefreshCcw size={11} /> {p.results?.some((r) => r.error) ? 'Resend' : 'Repost'}
+                          </Btn>
+                        )}
+                        <Btn variant="ghost" size="sm" style={{ padding: '4px 8px' }} onClick={() => deletePost(p)}><Trash2 size={12} /></Btn>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
       </div>
+
+      {/* post result confirmation — per-channel sent/simulated/failed + resend/delete */}
+      {resultPost && (
+        <Modal
+          title={<span style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <Send size={16} style={{ color: resultPost.status === 'failed' ? '#f87171' : 'var(--pink)' }} />
+            Post {resultPost.status === 'failed' ? 'failed' : 'result'}
+          </span>}
+          onClose={() => setResultPost(null)}
+          wide
+        >
+          <div className="small" style={{ whiteSpace: 'pre-wrap', background: 'var(--panel)', border: '1px solid var(--stroke)', borderRadius: 10, padding: '10px 12px', marginBottom: 14, maxHeight: 120, overflow: 'auto' }}>
+            {resultPost.content}
+          </div>
+          <div className="col" style={{ gap: 8 }}>
+            {(resultPost.results || []).map((r) => (
+              <div key={r.channelId} className="row" style={{ background: 'var(--panel)', border: '1px solid var(--stroke)', borderRadius: 10, padding: '10px 12px' }}>
+                <PlatGlyph id={r.channelId} size={15} />
+                <span style={{ fontWeight: 600, fontSize: 13.5 }}>{platName(r.channelId)}</span>
+                <span style={{ marginLeft: 'auto' }}>
+                  {r.ok
+                    ? <Chip tone="green">✅ Sent via API</Chip>
+                    : r.error
+                      ? <Chip tone="red">❌ Failed</Chip>
+                      : <Chip tone="orange">⚠️ Simulated</Chip>}
+                </span>
+              </div>
+            ))}
+          </div>
+          {(resultPost.results || []).some((r) => r.error) && (
+            <div className="small mt-3" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 10, padding: '10px 12px', lineHeight: 1.6 }}>
+              {(resultPost.results || []).filter((r) => r.error).map((r) => (
+                <div key={r.channelId} style={{ color: 'var(--muted)' }}>
+                  <b style={{ color: '#fca5a5' }}>{platName(r.channelId)}:</b> {r.error}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="faint small mt-3">⚠️ Simulated = no live API credentials (or media-only platform), so nothing was actually posted there.</div>
+          <div className="row mt-3" style={{ justifyContent: 'flex-end', gap: 8 }}>
+            {(resultPost.status === 'failed' || (resultPost.results || []).some((r) => r.error)) && (
+              <Btn variant="primary" size="sm" onClick={() => publishNow(resultPost)}><RefreshCcw size={13} /> Resend</Btn>
+            )}
+            <Btn variant="ghost" size="sm" onClick={() => deletePost(resultPost)}><Trash2 size={13} /> Delete post</Btn>
+            <Btn variant="ghost" size="sm" onClick={() => setResultPost(null)}>Done</Btn>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

@@ -414,8 +414,8 @@ app.post('/api/campaigns/:id/run-now', authed, async (req, res) => {
 });
 
 // ------------------------------------------------------------------ posts
-app.post('/api/posts', authed, (req, res) => {
-  const { channelIds = [], content = '', scheduledAt = null, campaignId = null } = req.body || {};
+app.post('/api/posts', authed, async (req, res) => {
+  const { channelIds = [], content = '', scheduledAt = null, campaignId = null, publish = false } = req.body || {};
   if (!channelIds.length || !content) return res.status(400).json({ error: 'Channels and content required' });
   const post = {
     id: uid(),
@@ -426,9 +426,19 @@ app.post('/api/posts', authed, (req, res) => {
     campaignId,
     publishedAt: null,
     engagement: null,
+    results: null,
     createdAt: Date.now(),
   };
   req.user.posts.unshift(post);
+  // "Publish now" — actually send it right away instead of leaving a dead draft
+  if (publish && post.status === 'draft') {
+    try {
+      await publishPost(req.user, post);
+    } catch (e) {
+      save(); // keep any partially-collected results so the user can retry
+      return res.status(500).json({ error: e.message || 'Publish failed' });
+    }
+  }
   save();
   res.json(post);
 });
@@ -442,7 +452,12 @@ app.delete('/api/posts/:id', authed, (req, res) => {
 app.post('/api/posts/:id/publish', authed, async (req, res) => {
   const p = req.user.posts.find((x) => x.id === req.params.id);
   if (!p) return res.status(404).json({ error: 'Post not found' });
-  await publishPost(req.user, p);
+  try {
+    await publishPost(req.user, p);
+  } catch (e) {
+    save(); // keep any partially-collected results so the user can retry
+    return res.status(500).json({ error: e.message || 'Publish failed' });
+  }
   save();
   res.json(p);
 });
@@ -604,39 +619,56 @@ async function publishCampaignAsync(user, campaign) {
 
     // Attempt real posting
     const result = await postToPlatform(user.id, ch.id, content);
-    const status = result.real ? 'published (real)' : 'published (simulated)';
+    const failed = !!result.error;
 
     const post = {
       id: uid(), channelIds: [ch.id], content,
-      status: 'published', scheduledAt: null, publishedAt: Date.now(),
-      campaignId: campaign.id, engagement: mockEngagement(ch), createdAt: Date.now(),
+      status: failed ? 'failed' : 'published', scheduledAt: null, publishedAt: Date.now(),
+      campaignId: campaign.id, engagement: failed ? null : mockEngagement(ch), createdAt: Date.now(),
+      results: [{ channelId: ch.id, ok: !!result.real, real: !!result.real, simulated: !!result.simulated, error: result.error }],
     };
     user.posts.unshift(post);
-    ch.posts = (ch.posts || 0) + 1;
-    log(user, `Campaign post → ${platformName(ch.id)} ${result.real ? '(API ✅)' : '(simulated)'}`, 'post');
+    if (!failed) ch.posts = (ch.posts || 0) + 1;
+    log(user, `Campaign post → ${platformName(ch.id)} ${result.real ? '(API ✅)' : failed ? '(failed)' : '(simulated)'}`, 'post');
     results.push(post);
   }
   return results;
 }
 
 async function publishPost(user, post) {
-  post.status = 'published';
   post.publishedAt = Date.now();
   post.scheduledAt = null;
-  const ch = user.channels.find((c) => post.channelIds.includes(c.id));
+  const channels = (post.channelIds || []).map((id) => user.channels.find((c) => c.id === id)).filter(Boolean);
 
-  // Attempt real posting via platform API — falls back to simulation silently
-  const result = await postToPlatform(user.id, ch?.id, post.content);
-  if (result.real) {
-    log(user, `Posted to ${platformName(ch?.id)} via API ✨`, 'post');
-  } else if (result.error) {
-    log(user, `${platformName(ch?.id)}: ${result.error} (simulated)`, 'post');
-  } else {
-    log(user, `Published ${platformName(ch?.id)} post (simulated)`, 'post');
+  // Attempt real posting to EVERY selected channel, collecting per-channel results
+  // so the client can confirm what actually went out (and resend failures).
+  const results = [];
+  const sentChannels = [];
+  for (const ch of channels) {
+    const result = await postToPlatform(user.id, ch.id, post.content);
+    results.push({ channelId: ch.id, ok: !!result.real, real: !!result.real, simulated: !!result.simulated, error: result.error });
+    // Only channels that actually went out (real API) or were simulated WITHOUT an
+    // error count as sent — an errored API call is a failure, not a success.
+    if (result.real || (result.simulated && !result.error)) sentChannels.push(ch);
+    if (result.real) {
+      log(user, `Posted to ${platformName(ch.id)} via API ✨`, 'post');
+    } else if (result.error) {
+      log(user, `${platformName(ch.id)}: ${result.error}`, 'post');
+    } else {
+      log(user, `Published ${platformName(ch.id)} post (simulated)`, 'post');
+    }
   }
+  post.results = results;
 
-  post.engagement = mockEngagement(ch);
-  if (ch) { ch.posts = (ch.posts || 0) + 1; }
+  if (sentChannels.length > 0) {
+    post.status = 'published';
+    post.engagement = mockEngagement(sentChannels[0]);
+    for (const ch of sentChannels) { ch.posts = (ch.posts || 0) + 1; }
+  } else {
+    // Every channel failed the real API call — surface it so the user can retry
+    post.status = 'failed';
+    post.engagement = null;
+  }
 }
 
 function mockEngagement(ch) {
