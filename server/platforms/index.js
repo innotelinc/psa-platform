@@ -64,11 +64,13 @@ export const X = {
   clientCredentialsInBody: true, // public client — no Basic auth header
   async post(accessToken, text, extra = {}) {
     // --- OAuth 1.0a path (legacy user keys) ---
+    // X retired the v1.1 write endpoints (statuses/update.json now returns 404),
+    // so OAuth 1.0a keys sign requests to the v2 POST /2/tweets endpoint instead.
+    // Per X's v2 auth mapping, the JSON body is NOT part of the OAuth 1.0a signature.
     if (extra.consumerKey && extra.accessToken) {
-      const url = 'https://api.twitter.com/1.1/statuses/update.json';
-      const bodyParams = { status: text };
+      const url = 'https://api.twitter.com/2/tweets';
       const authHeader = oauth1aAuthHeader(
-        'POST', url, bodyParams,
+        'POST', url, {},
         extra.consumerKey, extra.consumerSecret || '',
         extra.accessToken, extra.accessTokenSecret || ''
       );
@@ -76,13 +78,13 @@ export const X = {
         method: 'POST',
         headers: {
           Authorization: authHeader,
-          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Type': 'application/json',
         },
-        body: new URLSearchParams(bodyParams).toString(),
+        body: JSON.stringify({ text }),
       });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
-        throw new Error(err.errors?.[0]?.message || err.error || `X API v1.1 error ${r.status}`);
+        throw new Error(err.errors?.[0]?.message || err.detail || err.title || `X API error ${r.status}`);
       }
       return r.json();
     }
@@ -420,24 +422,25 @@ export async function autoConfigurePlatform(userId, platformId) {
   // X/Twitter: fetch authenticated user profile -> update channel handle & followers
   if (platformId === 'x') {
     if (hasOAuth1a) {
-      // OAuth 1.0a: use v1.1 account/verify_credentials.json
+      // OAuth 1.0a: use v2 users/me (v1.1 verify_credentials was retired alongside
+      // the write API). Query params ARE part of the OAuth 1.0a signature.
       try {
-        const url = 'https://api.twitter.com/1.1/account/verify_credentials.json';
+        const url = 'https://api.twitter.com/2/users/me';
         const authHeader = oauth1aAuthHeader(
-          'GET', url, {},
+          'GET', url, { 'user.fields': 'public_metrics' },
           xCreds.consumerKey, xCreds.consumerSecret || '',
           xCreds.accessToken, xCreds.accessTokenSecret || ''
         );
-        const r = await fetch(url, {
+        const r = await fetch(`${url}?user.fields=public_metrics`, {
           headers: { Authorization: authHeader },
         });
         if (r.ok) {
-          const profile = await r.json();
+          const { data } = await r.json();
           const ch = user.channels?.find((c) => c.id === 'x');
-          if (ch && profile) {
-            if (profile.screen_name) ch.handle = '@' + profile.screen_name;
-            if (profile.followers_count != null) {
-              ch.followers = profile.followers_count;
+          if (ch && data) {
+            if (data.username) ch.handle = '@' + data.username;
+            if (data.public_metrics?.followers_count != null) {
+              ch.followers = data.public_metrics.followers_count;
             }
           }
         }

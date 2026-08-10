@@ -172,6 +172,32 @@ describe('posts — publish flow', () => {
     assert.deepStrictEqual(empty.body.posts, []);
   });
 
+  it('X OAuth 1.0a posts go to the v2 /2/tweets endpoint with a signed header', async () => {
+    let captured = null;
+    globalThis.fetch = async (url, init) => {
+      captured = { url: String(url), init };
+      return new Response(JSON.stringify({ data: { id: 'tweet-1' } }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    try {
+      const res = await request.post('/api/posts')
+        .set('Authorization', 'Bearer tok-fail-user')
+        .send({ channelIds: ['x'], content: 'v2 tweet', publish: true })
+        .expect(200);
+      assert.strictEqual(res.body.status, 'published');
+      assert.strictEqual(captured.url, 'https://api.twitter.com/2/tweets');
+      assert.ok(!captured.url.includes('1.1'), 'must not hit the retired v1.1 endpoint');
+      assert.strictEqual(captured.init.method, 'POST');
+      assert.ok(String(captured.init.headers['Content-Type']).includes('application/json'));
+      assert.deepStrictEqual(JSON.parse(captured.init.body), { text: 'v2 tweet' });
+      assert.ok(String(captured.init.headers.Authorization).startsWith('OAuth '), 'OAuth 1.0a signature header kept');
+    } finally {
+      globalThis.fetch = oldFetch;
+    }
+  });
+
   it('DELETE /api/posts/:id removes any post (history cleanup)', async () => {
     const created = await request.post('/api/posts')
       .set('Authorization', 'Bearer tok-publish-user')

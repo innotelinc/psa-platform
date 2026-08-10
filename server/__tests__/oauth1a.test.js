@@ -40,9 +40,9 @@ describe('oauth1aSignature', () => {
   it('should produce a valid base64 HMAC-SHA1 signature', () => {
     const sig = oauth1aSignature(
       'POST',
-      'https://api.twitter.com/1.1/statuses/update.json',
+      'https://api.twitter.com/2/tweets',
       { oauth_consumer_key: 'ck', oauth_nonce: 'nonce', oauth_signature_method: 'HMAC-SHA1',
-        oauth_timestamp: '1234567890', oauth_token: 'tk', oauth_version: '1.0', status: 'hello' },
+        oauth_timestamp: '1234567890', oauth_token: 'tk', oauth_version: '1.0' },
       'csecret',
       'tsecret'
     );
@@ -182,7 +182,7 @@ describe('postEngine — OAuth 1.0a detection', () => {
     setTimeout(() => process.exit(0), 100);
   });
 
-  it('should detect OAuth 1.0a and use v1.1 endpoint (not OAuth 2.0)', async () => {
+  it('should detect OAuth 1.0a and use the v2 /2/tweets endpoint (v1.1 is retired)', async () => {
     const result = await postToPlatform('test-user-oauth1a', 'x', 'Hello OAuth1a test!');
 
     // Should succeed (real: true since we mocked fetch to return 200)
@@ -193,23 +193,16 @@ describe('postEngine — OAuth 1.0a detection', () => {
     assert.ok(fetchCalls.length >= 1, 'fetch should have been called');
     const call = fetchCalls[0];
 
-    // Should use the OAuth 1.0a v1.1 endpoint
-    assert.strictEqual(
-      call.url,
-      'https://api.twitter.com/1.1/statuses/update.json',
-      'should use v1.1 endpoint for OAuth 1.0a'
-    );
+    // OAuth 1.0a keys now sign the v2 endpoint — v1.1 statuses/update.json is retired (404)
+    assert.strictEqual(call.url, 'https://api.twitter.com/2/tweets');
+    assert.ok(!call.url.includes('1.1'), 'must not use the retired v1.1 endpoint');
 
     // Should have an OAuth Authorization header (not Bearer)
     const authHeader = call.init.headers?.Authorization || call.init.headers?.authorization || '';
     assert.ok(authHeader.startsWith('OAuth '), `should use OAuth header, got: ${authHeader.slice(0, 50)}`);
 
-    // Should POST the status in x-www-form-urlencoded body
-    const body = call.init.body;
-    assert.ok(body, 'should have a body');
-    assert.ok(body.toString().includes('status=Hello%20OAuth1a%20test') ||
-      body.toString().includes('status=Hello+OAuth1a+test'),
-      `body should contain the status text, got: ${body}`);
+    // v2 posts send a JSON body with { text }, not form-encoded status
+    assert.deepStrictEqual(JSON.parse(call.init.body), { text: 'Hello OAuth1a test!' });
   });
 
   it('should NOT require OAuth 2.0 bearer token when OAuth 1.0a is configured', async () => {
