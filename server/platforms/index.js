@@ -188,7 +188,10 @@ export const FACEBOOK = {
   tokenUrl: 'https://graph.facebook.com/v26.0/oauth/access_token',
   usePkce: false, // Meta's OAuth dialog rejects code_challenge/code_challenge_method params
   clientCredentialsInBody: true, // Meta's token endpoint expects client_id/client_secret in the body, not Basic auth
-  scopes: 'pages_manage_posts pages_read_engagement pages_show_list',
+  // pages_read_engagement is no longer accepted by Meta's use-case-based apps (it was
+  // flagged as an invalid scope alongside the legacy instagram_* names); pages_manage_posts
+  // + pages_show_list cover feed posting and listing the user's Pages.
+  scopes: 'pages_manage_posts pages_show_list',
   async post(accessToken, text, extra = {}) {
     // Facebook requires a page ID and page access token
     const pageId = extra.pageId;
@@ -222,7 +225,12 @@ export const INSTAGRAM = {
   tokenUrl: 'https://graph.facebook.com/v26.0/oauth/access_token',
   usePkce: false, // Meta's OAuth dialog rejects code_challenge/code_challenge_method params
   clientCredentialsInBody: true, // Meta's token endpoint expects client_id/client_secret in the body, not Basic auth
-  scopes: 'instagram_basic instagram_content_publish pages_read_engagement pages_show_list',
+  // Meta deprecated the legacy instagram_basic / instagram_content_publish / pages_read_engagement
+  // scope names (deadline Jan 27, 2025); the dialog now accepts instagram_business_basic +
+  // instagram_business_content_publish for this flow. pages_show_list stays for listing Pages and
+  // pages_read_user_content is the current page-read permission (was pages_read_engagement) used
+  // to resolve the IG Business Account linked to a Page.
+  scopes: 'instagram_business_basic instagram_business_content_publish pages_read_user_content pages_show_list',
   async post(accessToken, text, extra = {}) {
     // Instagram requires an IG Business Account ID
     const igUserId = extra.igUserId;

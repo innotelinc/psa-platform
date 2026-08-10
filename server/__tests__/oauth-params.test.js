@@ -52,6 +52,33 @@ describe('buildAuthorizeUrl — per-platform PKCE behavior', () => {
   });
 });
 
+describe('buildAuthorizeUrl — Meta scope names (Instagram + Facebook)', () => {
+  before(async () => {
+    process.env.DB_IN_MEMORY = '1';
+    store = await import('../store.js');
+    await seedUser('meta-scopes-user');
+    ({ buildAuthorizeUrl } = await import('../oauth.js'));
+  });
+
+  it('instagram requests the current instagram_business_* scopes, not the deprecated legacy names', () => {
+    const url = buildAuthorizeUrl('meta-scopes-user', 'instagram', 'https://example.com');
+    assert.ok(url.includes('instagram_business_basic'), `should request instagram_business_basic: ${url}`);
+    assert.ok(url.includes('instagram_business_content_publish'), `should request instagram_business_content_publish: ${url}`);
+    assert.ok(url.includes('pages_read_user_content'), 'should request the current page-read permission');
+    assert.ok(url.includes('pages_show_list'), 'should request pages_show_list');
+    assert.ok(!url.includes('instagram_basic'), 'must not request the deprecated instagram_basic');
+    assert.ok(!url.includes('instagram_content_publish'), 'must not request the deprecated instagram_content_publish');
+    assert.ok(!url.includes('pages_read_engagement'), 'must not request the rejected pages_read_engagement');
+  });
+
+  it('facebook no longer requests pages_read_engagement', () => {
+    const url = buildAuthorizeUrl('meta-scopes-user', 'facebook', 'https://example.com');
+    assert.ok(url.includes('pages_manage_posts'), 'should request pages_manage_posts');
+    assert.ok(url.includes('pages_show_list'), 'should request pages_show_list');
+    assert.ok(!url.includes('pages_read_engagement'), 'must not request pages_read_engagement');
+  });
+});
+
 describe('buildAuthorizeUrl — LinkedIn optional w_organization_social scope', () => {
   before(async () => {
     process.env.DB_IN_MEMORY = '1';
