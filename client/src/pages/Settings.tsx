@@ -156,7 +156,7 @@ export default function Settings() {
                 const configured = creds?.configured;
                 // X/Twitter: supports both OAuth 1.0a (legacy) and OAuth 2.0
                 const isX = pid === 'x';
-                const hasOAuth1a = isX && !!(storedExtra.consumerKey && storedExtra.accessToken);
+                const hasOAuth1a = isX && !creds?.oauth2Configured && !!(storedExtra.consumerKey && storedExtra.accessToken);
                 const hasDraft = draft.clientId || draft.clientSecret || extraFields.some((f) => f.key in (draft.extra || {}));
                 const [idLabel, secretLabel] = OAUTH_FIELD_NAMES[pid] || ['Client ID', 'Client Secret'];
                 // LinkedIn Company Page posting is opt-in (needs the w_organization_social scope).

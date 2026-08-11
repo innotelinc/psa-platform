@@ -90,8 +90,10 @@ export default function Dashboard() {
   };
 
   const isOAuth1a = (pid: string) => {
-    const extra = user?.platformCredentials?.[pid]?.extra;
-    return !!(extra?.consumerKey && extra?.accessToken);
+    const pc = user?.platformCredentials?.[pid];
+    // OAuth 2.0 takes priority — if it's configured, don't treat as OAuth 1.0a
+    if (pc?.oauth2Configured) return false;
+    return !!(pc?.extra?.consumerKey && pc?.extra?.accessToken);
   };
 
   const connect = async () => {

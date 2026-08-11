@@ -83,7 +83,7 @@ export interface State {
   resume: any;
   site: any;
   settings: { ai: { mode: string; provider: string; apiKey: string; baseUrl: string; model: string }; brand: { voice: string; emoji: string; signature: string } };
-  platformCredentials: Record<string, { configured: boolean; extra?: any }>;
+  platformCredentials: Record<string, { configured: boolean; oauth2Configured?: boolean; extra?: any }>;
   campaigns: Campaign[];
   posts: Post[];
   activity: Activity[];

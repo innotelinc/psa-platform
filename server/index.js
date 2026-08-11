@@ -178,6 +178,8 @@ const sanitize = (u) => {
         configured: pid === 'x'
           ? (!!(cred.extra?.consumerKey && cred.extra?.accessToken) || !!cred.clientId)
           : !!cred.clientId,
+        // Expose whether OAuth 2.0 is available so the Dashboard can prefer it
+        oauth2Configured: pid === 'x' ? !!cred.clientId : undefined,
         extra: cred.extra || {},
       };
     }
@@ -328,7 +330,7 @@ app.post('/api/oauth/:platform/auto-configure', authed, async (req, res) => {
     // Return updated channel data so the frontend can refresh without a full reload
     const ch = req.user.channels.find((c) => c.id === platform);
     const creds = req.user.platformCredentials?.[platform];
-    const masked = creds ? { configured: platform === 'x' ? (!!(creds.extra?.consumerKey && creds.extra?.accessToken) || !!creds.clientId) : !!creds.clientId, extra: creds.extra || {} } : null;
+    const masked = creds ? { configured: platform === 'x' ? (!!(creds.extra?.consumerKey && creds.extra?.accessToken) || !!creds.clientId) : !!creds.clientId, oauth2Configured: platform === 'x' ? !!creds.clientId : undefined, extra: creds.extra || {} } : null;
     log(req.user, `Re-synced ${platformName(platform)} profile`, 'channel');
     res.json({ channel: ch || null, credentials: masked });
   } catch (e) {

@@ -36,8 +36,10 @@ export async function postToPlatform(userId, channelId, text) {
   const user = users[userId];
   const creds = user?.platformCredentials?.[channelId]?.extra || {};
 
-  // X/Twitter OAuth 1.0a: uses consumer keys directly, no OAuth2 bearer token needed
-  const hasOAuth1a = channelId === 'x' && creds.consumerKey && creds.accessToken;
+  // X/Twitter OAuth 1.0a: only used as a fallback when OAuth 2.0 is NOT configured.
+  // If the user has set up OAuth 2.0 Client ID + Secret in Settings, prefer that.
+  const hasOAuth2 = !!(user?.platformCredentials?.[channelId]?.clientId);
+  const hasOAuth1a = channelId === 'x' && !hasOAuth2 && creds.consumerKey && creds.accessToken;
 
   // Get a valid access token (only needed for OAuth 2.0 flows)
   const token = hasOAuth1a ? 'oauth1a' : await getValidAccessToken(userId, channelId);
