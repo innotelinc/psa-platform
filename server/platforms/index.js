@@ -404,13 +404,21 @@ export async function autoConfigurePlatform(userId, platformId) {
   if (!user) return;
   if (!user.platformCredentials) user.platformCredentials = {};
 
-  // X/Twitter: prefer OAuth 2.0 when configured; fall back to OAuth 1.0a keys only
-  // when no OAuth 2.0 clientId is set.
+  // X/Twitter: prefer OAuth 2.0 when a valid token is available; fall back to
+  // OAuth 1.0a when the OAuth 2.0 token is missing (user hasn't reconnected yet).
   const xCreds = user.platformCredentials.x?.extra || {};
   const hasOAuth2ForX = !!(user.platformCredentials.x?.clientId);
-  const hasOAuth1a = platformId === 'x' && !hasOAuth2ForX && xCreds.consumerKey && xCreds.accessToken;
+  const hasOAuth1a = platformId === 'x' && xCreds.consumerKey && xCreds.accessToken;
 
-  const token = hasOAuth1a ? 'oauth1a' : await getValidAccessToken(userId, platformId);
+  let token = null;
+  if (hasOAuth2ForX) {
+    token = await getValidAccessToken(userId, platformId);
+    if (!token && hasOAuth1a) token = 'oauth1a';
+  } else if (hasOAuth1a) {
+    token = 'oauth1a';
+  } else {
+    token = await getValidAccessToken(userId, platformId);
+  }
   if (!token) return;
 
   const platform = PLATFORM_APIS[platformId];
