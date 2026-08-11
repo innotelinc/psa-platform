@@ -49,11 +49,17 @@ export async function postToPlatform(userId, channelId, text) {
     const result = await platform.post(token, text, creds);
     return { success: true, real: true, result };
   } catch (err) {
+    // Detect auth errors (401/403) and suggest reconnecting
+    const msg = err.message || '';
+    const isAuthError = /unauthorized|forbidden|401|403|invalid.token|expired.token/i.test(msg);
+    const hint = isAuthError
+      ? ` — Your ${platform.name} access token may be expired or revoked. Reconnect the channel to refresh it (Dashboard → Reconnect).`
+      : '';
     return {
       success: true, // Don't break the flow — fall back silently
       real: false,
       simulated: true,
-      error: err.message,
+      error: msg + hint,
     };
   }
 }
