@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Megaphone, PenLine, Users, CalendarClock, TrendingUp, Heart, Eye, Share2, MessageCircle, Rocket, Check, Loader2, Globe, Shield, ExternalLink, RefreshCw, Film } from 'lucide-react';
 import { useStore } from '../lib/store';
@@ -15,6 +15,27 @@ export default function Dashboard() {
   const [connecting, setConnecting] = useState(false);
   const [busyToggle, setBusyToggle] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
+
+  // Track the live OAuth handler & timeout so we can clean them up when the modal
+  // is dismissed mid-flight or the component unmounts.
+  const oauthHandlerRef = useRef<((e: MessageEvent) => void) | null>(null);
+  const oauthTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cleanupOAuth = () => {
+    if (oauthHandlerRef.current) {
+      window.removeEventListener('message', oauthHandlerRef.current);
+      oauthHandlerRef.current = null;
+    }
+    if (oauthTimeoutRef.current) {
+      clearTimeout(oauthTimeoutRef.current);
+      oauthTimeoutRef.current = null;
+    }
+  };
+
+  // Clean up on unmount (e.g. user navigates away while OAuth popup is open)
+  useEffect(() => {
+    return () => cleanupOAuth();
+  }, []);
 
   const growth = useMemo(() => (dashboard?.growth || []).map((g) => ({ label: new Date(g.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), value: g.followers })), [dashboard]);
   const eng = useMemo(() => (dashboard?.growth || []).map((g) => ({ label: new Date(g.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), value: g.engagement })), [dashboard]);
@@ -33,22 +54,26 @@ export default function Dashboard() {
     setConnecting(true);
     try {
       const { url } = await api.oauthAuthorize(connectId!);
-      const popup = window.open(url, 'oauth-popup', 'width=600,height=700');
+      // Use a unique window name so sequential connections don't collide — browsers
+      // refuse to re-open a popup whose name matches a previously-closed window.
+      const popupName = `oauth-popup-${connectId}-${Date.now()}`;
+      const popup = window.open(url, popupName, 'width=600,height=700');
       if (!popup) {
         toast('Popup blocked! Allow popups for OAuth.', 'bad');
         setConnecting(false);
         return;
       }
       const timeout = setTimeout(() => {
-        window.removeEventListener('message', handler);
+        cleanupOAuth();
         if (!popup.closed) popup.close();
         setConnecting(false);
         toast('OAuth timed out — please try again', 'bad');
       }, 180_000);
+      oauthTimeoutRef.current = timeout;
+
       const handler = (e: MessageEvent) => {
         if (e.data?.type === 'OAUTH_SUCCESS' && e.data?.platform === connectId) {
-          window.removeEventListener('message', handler);
-          clearTimeout(timeout);
+          cleanupOAuth();
           popup.close();
           setConnecting(false);
           setConnectId(null);
@@ -56,6 +81,7 @@ export default function Dashboard() {
           toast(`${platName(connectId!)} connected via OAuth 🔐`);
         }
       };
+      oauthHandlerRef.current = handler;
       window.addEventListener('message', handler);
     } catch (e: any) {
       toast(e.message, 'bad');
@@ -131,7 +157,7 @@ export default function Dashboard() {
         <h1>Welcome back, {firstName} <span className="sparkle">✨</span></h1>
         <p>
           Your fame engine is running — {dashboard.channelsConnected} of {dashboard.channelsEnabled} channels connected,
-          {dashboard.postsScheduled} posts queued, {dashboard.totalFollowers.toLocaleString()} followers and counting.
+          {dashboard.postsScheduled} posts queued, {dashboard.totalFollowers.toLocaleString()} total followers from connected channels.
         </p>
         <div className="hero-actions">
           <Btn variant="primary" onClick={() => nav('/campaigns')}><Megaphone size={17} /> New Campaign</Btn>
@@ -246,7 +272,7 @@ export default function Dashboard() {
                 )}
               </div>
               <div className="channel-foot">
-                <span className="channel-followers"><Users size={13} /> {fmtNum(ch.followers)} followers</span>
+                <span className="channel-followers"><Users size={13} /> {fmtNum(ch.connected ? ch.followers : 0)} followers{!ch.connected && <span className="faint" style={{ marginLeft: 4, fontSize: 10 }}>(disconnected)</span>}</span>
                 <div className="row" style={{ gap: 6 }}>
                   {ch.connected && hasApi && (
                     <button
@@ -258,6 +284,11 @@ export default function Dashboard() {
                     >
                       {syncingId === ch.id ? <Loader2 className="spin" size={12} /> : <RefreshCw size={12} />}
                     </button>
+                  )}
+                  {ch.connected && hasApi && !isOAuth1a(ch.id) && (
+                    <Btn variant="ghost" size="sm" onClick={() => setConnectId(ch.id)} title="Re-authorize to refresh tokens or add new scopes">
+                      <ExternalLink size={12} style={{ marginRight: 2 }} /> Reconnect
+                    </Btn>
                   )}
                   {ch.connected ? (
                     <Btn variant="ghost" size="sm" onClick={() => disconnect(ch.id)}>Disconnect</Btn>
@@ -333,7 +364,7 @@ export default function Dashboard() {
         <div className="card-sub">Followers per connected platform</div>
         <div className="mt-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '8px 28px' }}>
           {socialChannels.map((ch) => (
-            <BarRow key={ch.id} label={platName(ch.id)} value={ch.followers} max={Math.max(...socialChannels.map((c) => c.followers), 1)}
+            <BarRow key={ch.id} label={platName(ch.id)} value={ch.connected ? ch.followers : 0} max={Math.max(...socialChannels.map((c) => c.connected ? c.followers : 0), 1)}
               color={plat(ch.id)?.color} icon={<PlatGlyph id={ch.id} size={13} />} />
           ))}
         </div>
@@ -341,15 +372,18 @@ export default function Dashboard() {
 
       {/* connect modal */}
       {connectCh && (
-        <Modal title={<span style={{ display: 'flex', alignItems: 'center', gap: 9 }}><PlatGlyph id={connectCh.id} size={17} /> Connect {platName(connectCh.id)}</span>} onClose={() => setConnectId(null)}>
+        <Modal title={<span style={{ display: 'flex', alignItems: 'center', gap: 9 }}><PlatGlyph id={connectCh.id} size={17} /> {connectCh.connected ? 'Reconnect' : 'Connect'} {platName(connectCh.id)}</span>} onClose={() => { if (connecting) cleanupOAuth(); setConnectId(null); }}>
           {!connecting ? (
             <div className="col">
               <div className="card" style={{ background: 'rgba(255,255,255,0.03)' }}>
                 {isRealOAuth ? (
                   <>
-                    <div className="card-title"><Shield size={14} style={{ color: 'var(--cyan)' }} /> Real OAuth connection</div>
+                    <div className="card-title"><Shield size={14} style={{ color: 'var(--cyan)' }} /> {connectCh.connected ? 'Re-authorize' : 'Real OAuth connection'}</div>
                     <div className="card-sub" style={{ lineHeight: 1.7 }}>
-                      FameForge will open <b>{platName(connectCh.id)}'s official authorization page</b> in a popup. After you approve, FameForge can post directly to your {platName(connectCh.id)} account via their API.
+                      {connectCh.connected
+                        ? <>Re-authorize <b>{platName(connectCh.id)}</b> to refresh your access tokens or grant additional permissions (e.g., LinkedIn Company Page posting). FameForge will open the official authorization page — approve to update your connection.</>
+                        : <>FameForge will open <b>{platName(connectCh.id)}'s official authorization page</b> in a popup. After you approve, FameForge can post directly to your {platName(connectCh.id)} account via their API.</>
+                      }
                     </div>
                     <div className="divider" />
                     <div className="col small muted">
@@ -423,14 +457,14 @@ export default function Dashboard() {
               <div className="between">
                 <Btn variant="ghost" onClick={() => setConnectId(null)}>Cancel</Btn>
                 <Btn variant="primary" onClick={connect}>
-                  {isRealOAuth ? <><ExternalLink size={16} /> Authorize via {platName(connectCh.id)}</> : isMediaOnly ? <><Check size={16} /> Connect & Sync {platName(connectCh.id)}</> : <><Check size={16} /> Connect {platName(connectCh.id)}</>}
+                  {isRealOAuth ? <><ExternalLink size={16} /> {connectCh.connected ? 'Re-authorize' : 'Authorize'} via {platName(connectCh.id)}</> : isMediaOnly ? <><Check size={16} /> Connect & Sync {platName(connectCh.id)}</> : <><Check size={16} /> Connect {platName(connectCh.id)}</>}
                 </Btn>
               </div>
             </div>
           ) : (
             <div className="empty">
               <Loader2 className="spin" size={38} style={{ color: 'var(--pink)', margin: '0 auto 14px' }} />
-              <div style={{ fontWeight: 600 }}>{isRealOAuth ? `Opening ${platName(connectCh.id)} authorization…` : isMediaOnly ? `Syncing ${platName(connectCh.id)} profile…` : isOAuth1aConfigured ? `Connecting ${platName(connectCh.id)} with your keys…` : `Connecting to ${platName(connectCh.id)}…`}</div>
+              <div style={{ fontWeight: 600 }}>{isRealOAuth ? `${connectCh.connected ? 'Re-authorizing' : 'Opening'} ${platName(connectCh.id)} authorization…` : isMediaOnly ? `Syncing ${platName(connectCh.id)} profile…` : isOAuth1aConfigured ? `Connecting ${platName(connectCh.id)} with your keys…` : `Connecting to ${platName(connectCh.id)}…`}</div>
               <div className="muted small mt-2">
                 {isRealOAuth ? 'Complete the authorization in the popup window' : isMediaOnly ? <>Fetching your profile & latest stats from {platName(connectCh.id)} <span className="dot-flash" /></> : isOAuth1aConfigured ? <>Authenticating with your OAuth 1.0a tokens <span className="dot-flash" /></> : <>Handshaking with {platName(connectCh.id)} servers <span className="dot-flash" /></>}
               </div>

@@ -9,6 +9,7 @@ import { platName } from '../lib/platforms';
 interface ExtraField { key: string; label: string; placeholder: string; help: string; secret?: boolean }
 // Per-platform primary OAuth 2.0 field labels (matches each platform's developer portal terminology)
 const OAUTH_FIELD_NAMES: Record<string, [string, string]> = {
+  x:         ['Client ID', 'Client Secret'],
   linkedin:  ['Client ID', 'Client Secret'],
   facebook:  ['App ID', 'App Secret'],
   instagram: ['App ID', 'App Secret'],
@@ -153,11 +154,10 @@ export default function Settings() {
                 const draft = draftPlatforms[pid] || { clientId: '', clientSecret: '', extra: {} };
                 const extraFields = EXTRA_FIELDS[pid] || [];
                 const configured = creds?.configured;
-                // X/Twitter: uses OAuth 1.0a exclusively (no Client ID/Secret)
+                // X/Twitter: supports both OAuth 1.0a (legacy) and OAuth 2.0
                 const isX = pid === 'x';
-                const hasDraft = isX
-                  ? extraFields.some((f) => f.key in (draft.extra || {}))
-                  : (draft.clientId || draft.clientSecret || extraFields.some((f) => f.key in (draft.extra || {})));
+                const hasOAuth1a = isX && !!(storedExtra.consumerKey && storedExtra.accessToken);
+                const hasDraft = draft.clientId || draft.clientSecret || extraFields.some((f) => f.key in (draft.extra || {}));
                 const [idLabel, secretLabel] = OAUTH_FIELD_NAMES[pid] || ['Client ID', 'Client Secret'];
                 // LinkedIn Company Page posting is opt-in (needs the w_organization_social scope).
                 // Legacy users who already have pages stored count as enabled.
@@ -172,7 +172,11 @@ export default function Settings() {
                           <div className="faint small mt-1">
                             {configured ? (
                               isX ? (
-                                <span style={{ color: 'var(--green)' }}>✅ OAuth 1.0a configured & ready</span>
+                                hasOAuth1a ? (
+                                  <span style={{ color: 'var(--green)' }}>✅ OAuth 1.0a configured & ready</span>
+                                ) : (
+                                  <span style={{ color: 'var(--green)' }}>✅ OAuth 2.0 configured & ready</span>
+                                )
                               ) : (
                                 <span style={{ color: 'var(--green)' }}>✅ Configured & ready</span>
                               )
@@ -212,16 +216,14 @@ export default function Settings() {
                         }}><Save size={12} /> Save</button>
                       </div>
                     </div>
-                    {!isX && (
-                      <div className="grid mt-2" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                        <input className="input" style={{ fontSize: 12, padding: '8px 10px' }} type="password" placeholder={idLabel}
-                          value={draft.clientId}
-                          onChange={(e) => setDraftPlatforms((p) => ({ ...p, [pid]: { ...(p[pid] || {}), clientId: e.target.value, extra: (p[pid] || {}).extra || draft.extra || {} } }))} />
-                        <input className="input" style={{ fontSize: 12, padding: '8px 10px' }} type="password" placeholder={secretLabel}
-                          value={draft.clientSecret}
-                          onChange={(e) => setDraftPlatforms((p) => ({ ...p, [pid]: { ...(p[pid] || {}), clientSecret: e.target.value, extra: (p[pid] || {}).extra || draft.extra || {} } }))} />
-                      </div>
-                    )}
+                    <div className="grid mt-2" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <input className="input" style={{ fontSize: 12, padding: '8px 10px' }} type="password" placeholder={idLabel}
+                        value={draft.clientId}
+                        onChange={(e) => setDraftPlatforms((p) => ({ ...p, [pid]: { ...(p[pid] || {}), clientId: e.target.value, extra: (p[pid] || {}).extra || draft.extra || {} } }))} />
+                      <input className="input" style={{ fontSize: 12, padding: '8px 10px' }} type="password" placeholder={secretLabel}
+                        value={draft.clientSecret}
+                        onChange={(e) => setDraftPlatforms((p) => ({ ...p, [pid]: { ...(p[pid] || {}), clientSecret: e.target.value, extra: (p[pid] || {}).extra || draft.extra || {} } }))} />
+                    </div>
                     {extraFields.length > 0 && (
                       <>
                         <div className="divider" style={{ margin: '8px 0 4px' }} />

@@ -24,6 +24,16 @@ export function buildAuthorizeUrl(userId, platformId, redirectBase) {
   const { verifier, challenge } = pkceChallenge();
   const state = uid();
   const creds = getCreds(userId, platformId);
+
+  // Validate credentials are configured — an empty client_id makes the provider
+  // show a confusing error page in the popup instead of a helpful message.
+  if (!creds.clientId) {
+    throw new Error(
+      `No API credentials configured for ${platform.name}. ` +
+      `Add your ${platform.name} Client ID & Secret in Settings → Platform API Keys first.`
+    );
+  }
+
   const redirectUri = `${redirectBase}/api/oauth/${platformId}/callback`;
 
   pendingStates.set(state, { userId, platform: platformId, verifier, createdAt: Date.now() });

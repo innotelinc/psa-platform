@@ -174,9 +174,9 @@ const sanitize = (u) => {
   if (u.platformCredentials) {
     for (const [pid, cred] of Object.entries(u.platformCredentials)) {
       maskedCreds[pid] = {
-        // X uses OAuth 1.0a exclusively; other platforms use OAuth 2.0 clientId
+        // X/Twitter supports both OAuth 1.0a (legacy user keys) and OAuth 2.0
         configured: pid === 'x'
-          ? !!(cred.extra?.consumerKey && cred.extra?.accessToken)
+          ? (!!(cred.extra?.consumerKey && cred.extra?.accessToken) || !!cred.clientId)
           : !!cred.clientId,
         extra: cred.extra || {},
       };
@@ -328,7 +328,7 @@ app.post('/api/oauth/:platform/auto-configure', authed, async (req, res) => {
     // Return updated channel data so the frontend can refresh without a full reload
     const ch = req.user.channels.find((c) => c.id === platform);
     const creds = req.user.platformCredentials?.[platform];
-    const masked = creds ? { configured: platform === 'x' ? !!(creds.extra?.consumerKey && creds.extra?.accessToken) : !!creds.clientId, extra: creds.extra || {} } : null;
+    const masked = creds ? { configured: platform === 'x' ? (!!(creds.extra?.consumerKey && creds.extra?.accessToken) || !!creds.clientId) : !!creds.clientId, extra: creds.extra || {} } : null;
     log(req.user, `Re-synced ${platformName(platform)} profile`, 'channel');
     res.json({ channel: ch || null, credentials: masked });
   } catch (e) {
@@ -539,7 +539,7 @@ app.get('/api/dashboard', authed, (req, res) => {
     fameScore: score,
     channelsConnected: u.channels.filter((c) => c.connected).length,
     channelsEnabled: u.channels.filter((c) => c.enabled).length,
-    totalFollowers: u.channels.reduce((s, c) => s + (c.followers || 0), 0),
+    totalFollowers: u.channels.reduce((s, c) => s + (c.connected ? (c.followers || 0) : 0), 0),
     postsPublished: u.posts.filter((p) => p.status === 'published').length,
     postsScheduled: u.posts.filter((p) => p.status === 'scheduled').length,
     activeCampaigns: u.campaigns.filter((c) => c.active).length,
@@ -567,7 +567,7 @@ function buildGrowth(u) {
 
   // No history yet — show current follower count as a flat 14-day baseline
   const published = u.posts.filter((p) => p.status === 'published').sort((a, b) => (a.publishedAt || 0) - (b.publishedAt || 0));
-  const totalFollowers = u.channels.reduce((s, c) => s + (c.followers || 0), 0);
+  const totalFollowers = u.channels.reduce((s, c) => s + (c.connected ? (c.followers || 0) : 0), 0);
   const series = [];
   const start = published[0]?.publishedAt || Date.now() - 14 * 864e5;
   for (let i = 0; i < 14; i++) {
@@ -615,7 +615,7 @@ async function tick() {
     // daily fame snapshot (no fake follower growth — only real OAuth data)
     const lastSnap = user.fame.history[user.fame.history.length - 1];
     if (!lastSnap || now - lastSnap.t > 864e5) {
-      user.fame.history.push({ t: now, score: fameScore(user), followers: user.channels.reduce((s, c) => s + c.followers, 0) });
+      user.fame.history.push({ t: now, score: fameScore(user), followers: user.channels.reduce((s, c) => s + (c.connected ? c.followers : 0), 0) });
       if (user.fame.history.length > 60) user.fame.history = user.fame.history.slice(-60);
       changed = true;
     }
@@ -710,7 +710,7 @@ function log(user, message, kind) {
 // ------------------------------------------------------------------ fame score
 export function fameScore(user) {
   const connected = user.channels.filter((c) => c.connected).length;
-  const followers = user.channels.reduce((s, c) => s + (c.followers || 0), 0);
+  const followers = user.channels.reduce((s, c) => s + (c.connected ? (c.followers || 0) : 0), 0);
   const posts7 = user.posts.filter((p) => p.status === 'published' && p.publishedAt > Date.now() - 7 * 864e5).length;
   const pro = user.profile;
   const profileComplete = [
