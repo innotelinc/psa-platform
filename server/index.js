@@ -462,6 +462,26 @@ app.post('/api/posts/:id/publish', authed, async (req, res) => {
   res.json(p);
 });
 
+// Publish every draft post in one call ("Publish all drafts")
+app.post('/api/posts/publish-drafts', authed, async (req, res) => {
+  const drafts = req.user.posts.filter((p) => p.status === 'draft');
+  if (!drafts.length) return res.json({ published: 0, failed: 0, posts: [] });
+  let published = 0;
+  let failed = 0;
+  for (const p of drafts) {
+    try {
+      await publishPost(req.user, p);
+      if (p.status === 'failed') failed++;
+      else published++;
+    } catch {
+      save();
+      failed++;
+    }
+  }
+  save();
+  res.json({ published, failed, posts: drafts });
+});
+
 // Resend every failed post in one call ("Resend all failed")
 app.post('/api/posts/resend-failed', authed, async (req, res) => {
   const failed = req.user.posts.filter((p) => p.status === 'failed');

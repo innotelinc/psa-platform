@@ -47,6 +47,7 @@ export const api = {
   deletePost: (id: string) => request<{ ok: boolean }>(`/posts/${id}`, 'DELETE'),
   publishPost: (id: string) => request<any>(`/posts/${id}/publish`, 'POST'),
   resendFailedPosts: () => request<{ resent: number; stillFailed: number; posts: Post[] }>('/posts/resend-failed', 'POST'),
+  publishDrafts: () => request<{ published: number; failed: number; posts: Post[] }>('/posts/publish-drafts', 'POST'),
   generate: (payload: any) => request<any>('/ai/generate', 'POST', payload),
   // OAuth
   oauthAuthorize: (platform: string) => request<{ url: string }>(`/oauth/${platform}/authorize`, 'POST'),

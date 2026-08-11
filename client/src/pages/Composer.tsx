@@ -33,6 +33,7 @@ export default function Composer() {
   const [resultPost, setResultPost] = useState<Post | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [resendingAll, setResendingAll] = useState(false);
+  const [publishingDrafts, setPublishingDrafts] = useState(false);
 
   if (!user) return null;
   const available = user.channels.filter((c) => c.enabled && (c.connected || c.id === 'website' || c.id === 'resume'));
@@ -149,6 +150,25 @@ export default function Composer() {
   }, [user]);
 
   const failedPosts = useMemo(() => history.filter((p) => p.status === 'failed'), [history]);
+  const draftPosts = useMemo(() => history.filter((p) => p.status === 'draft'), [history]);
+
+  // Publish every draft post in one go
+  const publishAllDrafts = async () => {
+    if (!draftPosts.length) return;
+    if (!confirm(`Publish ${draftPosts.length} draft${draftPosts.length === 1 ? '' : 's'} now?`)) return;
+    setPublishingDrafts(true);
+    try {
+      const { published, failed } = await api.publishDrafts();
+      await refresh(); await refreshDash();
+      if (published) toast(`Published ${published} post${published === 1 ? '' : 's'} ✅`, 'good');
+      if (failed) toast(`${failed} failed — check the errors below`, 'bad');
+      if (!published && !failed) toast('No drafts to publish');
+    } catch (e: any) {
+      toast(e?.message || 'Publish failed', 'bad');
+    } finally {
+      setPublishingDrafts(false);
+    }
+  };
 
   // Retry every failed post in one go (batch endpoint on the server)
   const resendAllFailed = async () => {
@@ -329,11 +349,18 @@ export default function Composer() {
           <div className="card">
             <div className="between" style={{ alignItems: 'flex-start' }}>
               <div className="card-title" style={{ marginBottom: 0 }}>Posts & history <span className="chip sm" style={{ marginLeft: 8 }}>{history.length}</span></div>
-              {failedPosts.length > 0 && (
-                <Btn variant="primary" size="sm" onClick={resendAllFailed} disabled={resendingAll} title={`Retry ${failedPosts.length} failed post${failedPosts.length === 1 ? '' : 's'}`}>
-                  {resendingAll ? <Loader2 className="spin" size={13} /> : <RefreshCcw size={13} />} Resend {failedPosts.length} failed
-                </Btn>
-              )}
+              <div className="row" style={{ gap: 6 }}>
+                {draftPosts.length > 0 && (
+                  <Btn variant="primary" size="sm" onClick={publishAllDrafts} disabled={publishingDrafts} title={`Publish ${draftPosts.length} draft${draftPosts.length === 1 ? '' : 's'} now`}>
+                    {publishingDrafts ? <Loader2 className="spin" size={13} /> : <Send size={13} />} Publish {draftPosts.length} draft{draftPosts.length === 1 ? '' : 's'}
+                  </Btn>
+                )}
+                {failedPosts.length > 0 && (
+                  <Btn variant="primary" size="sm" onClick={resendAllFailed} disabled={resendingAll} title={`Retry ${failedPosts.length} failed post${failedPosts.length === 1 ? '' : 's'}`}>
+                    {resendingAll ? <Loader2 className="spin" size={13} /> : <RefreshCcw size={13} />} Resend {failedPosts.length} failed
+                  </Btn>
+                )}
+              </div>
             </div>
             <div className="card-sub">Scheduled, drafts and published — resend or delete any post.</div>
             <div className="col mt-3">
